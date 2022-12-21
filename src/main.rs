@@ -77,34 +77,6 @@ impl ToTokens for ExternaliseFn {
     }
 }
 
-fn call_function_from_sig(sig: &Signature) -> proc_macro2::TokenStream {
-    let mut sig_str = sig.to_token_stream().to_string();
-    // now we need to remove everything that's not syntaxically correct when trying to call a function
-    // before fn there is pub/const
-    sig_str = sig_str.split("fn ").nth(1).unwrap().to_string();
-    // after the -> there is the return type
-    sig_str = sig_str.split(" ->").next().unwrap().to_string();
-    // remove the types
-    let mut types_boundaries = Vec::<(usize, usize)>::new();
-    let mut start = None;
-    for (i, c) in sig_str.chars().enumerate() {
-        if c == ':' {
-            start = Some(i)
-        } else if c == ',' || c == ')' {
-            if let Some(start) = start {
-                types_boundaries.push((start, i))
-            }
-        }
-    }
-    // we start from the end, otherwise the index would be messed up
-    for (start_idx, end_idx) in types_boundaries.into_iter().rev() {
-        for _ in start_idx..end_idx {
-            sig_str.remove(start_idx);
-        }
-    }
-    format!("{{ {sig_str} }}").parse().unwrap()
-}
-
 impl ExternaliseFn {
     fn handle_item_fn(&mut self, item_fn: &ItemFn) {
         if item_fn.sig.asyncness.is_none()
@@ -143,10 +115,38 @@ impl ExternaliseFn {
                 }
             }
             // the body of the function should just be calling the original function
-            extern_fn.block = syn::parse2(call_function_from_sig(&item_fn.sig)).unwrap();
+            extern_fn.block = syn::parse2(self.call_function_from_sig(&item_fn.sig)).unwrap();
 
             self.externalised_fn_buf.push(extern_fn);
         }
+    }
+
+    fn call_function_from_sig(&self, sig: &Signature) -> proc_macro2::TokenStream {
+        let mut sig_str = sig.to_token_stream().to_string();
+        // now we need to remove everything that's not syntaxically correct when trying to call a function
+        // before fn there is pub/const
+        sig_str = sig_str.split("fn ").nth(1).unwrap().to_string();
+        // after the -> there is the return type
+        sig_str = sig_str.split(" ->").next().unwrap().to_string();
+        // remove the types
+        let mut types_boundaries = Vec::<(usize, usize)>::new();
+        let mut start = None;
+        for (i, c) in sig_str.chars().enumerate() {
+            if c == ':' {
+                start = Some(i)
+            } else if c == ',' || c == ')' {
+                if let Some(start) = start {
+                    types_boundaries.push((start, i))
+                }
+            }
+        }
+        // we start from the end, otherwise the index would be messed up
+        for (start_idx, end_idx) in types_boundaries.into_iter().rev() {
+            for _ in start_idx..end_idx {
+                sig_str.remove(start_idx);
+            }
+        }
+        format!("{{ {sig_str} }}").parse().unwrap()
     }
 }
 
@@ -206,9 +206,10 @@ mod tests {
     #[test]
     fn test_call_function_from_sig() {
         let sig: Signature = syn::parse_str("fn foo(f: Foo, x: u64) -> bool").unwrap();
+        let ext = ExternaliseFn::default();
         assert_eq!(
             "{ foo (f , x) }",
-            format!("{}", call_function_from_sig(&sig))
+            format!("{}", ext.call_function_from_sig(&sig))
         )
     }
 }
