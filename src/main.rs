@@ -143,7 +143,6 @@ impl ExternaliseFn {
                         quote!(#ident).to_tokens(&mut args_buf)
                     }
                 }
-                _ => unreachable!("really?"),
             }
             if iter_peek.peek().is_some() {
                 quote!(,).to_tokens(&mut args_buf)
