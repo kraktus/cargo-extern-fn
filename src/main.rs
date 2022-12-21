@@ -1,3 +1,4 @@
+use std::fs;
 use std::{fs::File, io::Read, path::PathBuf};
 
 use clap::Parser;
@@ -202,9 +203,9 @@ fn main() {
             let mut parsed_file_tokens = quote!(#parsed_file);
             externalised_fn.to_tokens(&mut parsed_file_tokens);
             if args.dry {
-                println!("{}", parsed_file_tokens)
+                println!("{parsed_file_tokens}")
             } else {
-                
+                fs::write(entry.path(), format!("{parsed_file_tokens}")).expect("saving code changes failed");
             }
         }
     }
