@@ -1,14 +1,13 @@
-
 use std::{fs::File, io::Read, path::PathBuf};
 
-use clap::{Parser};
+use clap::Parser;
 use syn::parse::{Parse, ParseStream};
 use syn::visit::{self, Visit};
+use syn::{token, FnArg, ImplItemMethod, ItemFn, ItemImpl, Lifetime, Signature, Token};
 use syn::{
     visit_mut::{self, VisitMut},
     Attribute, ItemEnum, ItemStruct, Type, Visibility,
 };
-use syn::{ImplItemMethod, ItemFn, ItemImpl, Signature};
 
 use quote::{format_ident, quote, ToTokens};
 
@@ -66,7 +65,7 @@ impl VisitMut for AddReprC {
 #[derive(Debug, Clone, Default)]
 struct ExternaliseFn {
     // only set if not a trait method
-    current_impl_name: Option<Type>,
+    current_impl_ty: Option<Type>,
     externalised_fn_buf: Vec<ItemFn>,
 }
 
@@ -118,6 +117,31 @@ impl ExternaliseFn {
             extern_fn.attrs.push(outer_attr("#[no_mangle]"));
             extern_fn.sig.abi = Some(syn::parse_str(r#"extern "C""#).unwrap());
             extern_fn.sig.ident = format_ident!("{}_ffi", extern_fn.sig.ident);
+            for arg in extern_fn.sig.inputs.iter_mut() {
+                if let FnArg::Receiver(rec) = arg {
+                    let name = self
+                        .current_impl_ty
+                        .as_ref()
+                        .expect("Method not in an struct/enum impl");
+                    let fn_arg: FnArg =
+                        syn::parse2(match (rec.reference.clone(), rec.mutability) {
+                            (None, None) => quote!(self_: #name),
+                            (None, Some(_)) => quote!(self_: mut #name),
+                            (Some((_, lifetime_opt)), None) => {
+                                let lifetime =
+                                    lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
+                                quote!(self_: &#lifetime #name)
+                            }
+                            (Some((_, lifetime_opt)), Some(_)) => {
+                                let lifetime =
+                                    lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
+                                quote!(self_: &#lifetime mut #name)
+                            }
+                        })
+                        .unwrap();
+                    *arg = fn_arg;
+                }
+            }
             // the body of the function should just be calling the original function
             extern_fn.block = syn::parse2(call_function_from_sig(&item_fn.sig)).unwrap();
 
@@ -128,6 +152,11 @@ impl ExternaliseFn {
 
 impl<'ast> Visit<'ast> for ExternaliseFn {
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
+        if item_impl.trait_.is_none() {
+            self.current_impl_ty = Some(*item_impl.self_ty.clone());
+        } else {
+            self.current_impl_ty = None
+        }
         visit::visit_item_impl(self, item_impl);
     }
 
@@ -177,6 +206,9 @@ mod tests {
     #[test]
     fn test_call_function_from_sig() {
         let sig: Signature = syn::parse_str("fn foo(f: Foo, x: u64) -> bool").unwrap();
-        assert_eq!("foo (f , x)", format!("{}", call_function_from_sig(&sig)))
+        assert_eq!(
+            "{ foo (f , x) }",
+            format!("{}", call_function_from_sig(&sig))
+        )
     }
 }

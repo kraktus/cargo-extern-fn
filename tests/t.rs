@@ -19,6 +19,17 @@ impl Baz {
             _ => false,
         }
     }
+
+    pub fn to_b(&mut self) {
+        *self = Self::B;
+    }
+
+    pub fn to_str(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+        }
+    }
 }
 
 pub fn foo(f: Foo, x: u64) -> bool {
