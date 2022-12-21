@@ -64,7 +64,7 @@ impl VisitMut for AddReprC {
 // regular `pub fn foo(arg1: X, arg2: &Y) -> bool`
 // are converted to `#[no_mangle] pub extern "C" fn foo_ffi(arg1: X, arg2: &Y) -> bool`
 // method `pub fn foo_method(&self,arg1: X, arg2: &Y) -> bool`
-// are converted to `#[no_mangle] pub extern "C" fn foo_method_ffi(&self: Foo,arg1: X, arg2: &Y) -> bool`
+// are converted to `#[no_mangle] pub extern "C" fn foo_method_ffi(self_: &Foo,arg1: X, arg2: &Y) -> bool`
 #[derive(Debug, Clone, Default)]
 struct ExternaliseFn {
     // only set if not a trait method
