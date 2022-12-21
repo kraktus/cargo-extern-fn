@@ -8,9 +8,10 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
 proc-macro2 = "1.0"
+quote = "1"
 
 # copied from cargo-expand
 [dependencies.syn]
 version = "1"
 default-features = false
-features = ["full", "parsing", "printing", "visit-mut", "derive"]
+features = ["full", "parsing", "printing", "visit", "visit-mut", "derive", "clone-impls", "extra-traits"]
