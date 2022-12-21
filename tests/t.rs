@@ -12,6 +12,15 @@ pub enum Baz {
     B,
 }
 
+impl Baz {
+    pub fn is_a(&self) -> bool {
+        match self {
+            Self::A => true,
+            _ => false,
+        }
+    }
+}
+
 pub fn foo(f: Foo, x: u64) -> bool {
     true
 }

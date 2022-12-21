@@ -1,3 +1,4 @@
+use std::ffi::{OsStr, OsString};
 use std::{fs::File, io::Read, path::PathBuf};
 
 use clap::{ArgAction, Parser};
@@ -8,7 +9,7 @@ use syn::{
     visit_mut::{self, VisitMut},
     Attribute, Data, Expr, ItemEnum, ItemStruct, Lit, LitInt, Type, Visibility,
 };
-use syn::{Abi, ImplItemMethod, ItemFn, Signature};
+use syn::{Abi, Block, ImplItemMethod, ItemFn, Signature};
 
 use quote::{format_ident, quote, ToTokens};
 
@@ -17,6 +18,8 @@ use quote::{format_ident, quote, ToTokens};
 struct Cli {
     #[arg(default_value = "src/")]
     dir: PathBuf,
+    #[arg(default_value = "foo.rs")]
+    ignore: Vec<OsString>,
 }
 
 // add #[repr(C)]
@@ -74,6 +77,34 @@ impl ToTokens for ExternaliseFn {
     }
 }
 
+fn call_function_from_sig(sig: &Signature) -> proc_macro2::TokenStream {
+    let mut sig_str = sig.to_token_stream().to_string();
+    // now we need to remove everything that's not syntaxically correct when trying to call a function
+    // before fn there is pub/const
+    sig_str = sig_str.split("fn ").nth(1).unwrap().to_string();
+    // after the -> there is the return type
+    sig_str = sig_str.split(" ->").next().unwrap().to_string();
+    // remove the types
+    let mut types_boundaries = Vec::<(usize, usize)>::new();
+    let mut start = None;
+    for (i, c) in sig_str.chars().enumerate() {
+        if c == ':' {
+            start = Some(i)
+        } else if c == ',' || c == ')' {
+            if let Some(start) = start {
+                types_boundaries.push((start, i))
+            }
+        }
+    }
+    // we start from the end, otherwise the index would be messed up
+    for (start_idx, end_idx) in types_boundaries.into_iter().rev() {
+        for _ in start_idx..end_idx {
+            sig_str.remove(start_idx);
+        }
+    }
+    format!("{{ {sig_str} }}").parse().unwrap()
+}
+
 impl ExternaliseFn {
     fn handle_item_fn(&mut self, item_fn: &ItemFn) {
         if item_fn.sig.asyncness.is_none()
@@ -86,6 +117,8 @@ impl ExternaliseFn {
             extern_fn.attrs.push(outer_attr("#[no_mangle]"));
             extern_fn.sig.abi = Some(syn::parse_str(r#"extern "C""#).unwrap());
             extern_fn.sig.ident = format_ident!("{}_ffi", extern_fn.sig.ident);
+            // the body of the function should just be calling the original function
+            extern_fn.block = syn::parse2(call_function_from_sig(&item_fn.sig)).unwrap();
 
             self.externalised_fn_buf.push(extern_fn);
         }
@@ -111,7 +144,12 @@ fn main() {
     let entries = args.dir.read_dir().expect("read_dir call failed");
     for entry_res in entries {
         let entry = entry_res.unwrap();
-        if entry.file_type().expect("file_type failed").is_file() {
+        if entry.file_type().expect("file_type failed").is_file()
+            && entry
+                .path()
+                .file_name()
+                .map_or(true, |n| !args.ignore.contains(n))
+        {
             let mut file = File::open(entry.path()).expect("reading file in src/ failed");
             let mut src = String::new();
             file.read_to_string(&mut src).expect("Unable to read file");
@@ -123,5 +161,16 @@ fn main() {
             externalised_fn.to_tokens(&mut parsed_file_tokens);
             println!("{}", parsed_file_tokens)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_call_function_from_sig() {
+        let sig: Signature = syn::parse_str("fn foo(f: Foo, x: u64) -> bool").unwrap();
+        assert_eq!("foo (f , x)", format!("{}", call_function_from_sig(&sig)))
     }
 }
