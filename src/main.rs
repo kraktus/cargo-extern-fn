@@ -3,7 +3,10 @@ use std::{fs::File, io::Read, path::PathBuf};
 use clap::Parser;
 use syn::parse::{Parse, ParseStream};
 use syn::visit::{self, Visit};
-use syn::{token, FnArg, ImplItemMethod, ItemFn, ItemImpl, Lifetime, Signature, Token};
+use syn::{
+    token, FnArg, Ident, ImplItemMethod, ItemFn, ItemImpl, Lifetime, Pat, PatIdent, PatType,
+    Signature, Token,
+};
 use syn::{
     visit_mut::{self, VisitMut},
     Attribute, ItemEnum, ItemStruct, Type, Visibility,
@@ -14,9 +17,9 @@ use quote::{format_ident, quote, ToTokens};
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
-    #[arg(default_value = "src/")]
+    #[arg(default_value = "src/", help = "directory to look for the code to modify")]
     dir: PathBuf,
-    #[arg(default_value = "foo.rs")]
+    #[arg(default_value = "foo.rs", help = "list of files to ignore, separated by space")]
     ignore: Vec<String>,
 }
 
@@ -122,31 +125,32 @@ impl ExternaliseFn {
     }
 
     fn call_function_from_sig(&self, sig: &Signature) -> proc_macro2::TokenStream {
-        let mut sig_str = sig.to_token_stream().to_string();
-        // now we need to remove everything that's not syntaxically correct when trying to call a function
-        // before fn there is pub/const
-        sig_str = sig_str.split("fn ").nth(1).unwrap().to_string();
-        // after the -> there is the return type
-        sig_str = sig_str.split(" ->").next().unwrap().to_string();
-        // remove the types
-        let mut types_boundaries = Vec::<(usize, usize)>::new();
-        let mut start = None;
-        for (i, c) in sig_str.chars().enumerate() {
-            if c == ':' {
-                start = Some(i)
-            } else if c == ',' || c == ')' {
-                if let Some(start) = start {
-                    types_boundaries.push((start, i))
+        let fn_ident = format!(
+            "{}{}",
+            self.current_impl_ty
+                .as_ref()
+                .map(|ty| quote!(<#ty>::).to_string())
+                .unwrap_or_default(),
+            sig.ident
+        );
+        let mut args_buf = proc_macro2::TokenStream::new();
+        let mut iter_peek = sig.inputs.iter().peekable();
+        while let Some(arg) = iter_peek.next() {
+            match arg {
+                FnArg::Receiver(_) => quote!(self_).to_tokens(&mut args_buf),
+                FnArg::Typed(PatType { pat, .. }) => {
+                    if let Pat::Ident(PatIdent { ident, .. }) = (**pat).clone() {
+                        quote!(#ident).to_tokens(&mut args_buf)
+                    }
                 }
+                _ => unreachable!("really?"),
+            }
+            if iter_peek.peek().is_some() {
+                quote!(,).to_tokens(&mut args_buf)
             }
         }
-        // we start from the end, otherwise the index would be messed up
-        for (start_idx, end_idx) in types_boundaries.into_iter().rev() {
-            for _ in start_idx..end_idx {
-                sig_str.remove(start_idx);
-            }
-        }
-        format!("{{ {sig_str} }}").parse().unwrap()
+
+        format!("{{ {fn_ident}({args_buf}) }}").parse().unwrap()
     }
 }
 
@@ -161,6 +165,7 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
     }
 
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
+        self.current_impl_ty = None;
         self.handle_item_fn(item_fn);
         visit::visit_item_fn(self, item_fn);
     }
@@ -209,6 +214,17 @@ mod tests {
         let ext = ExternaliseFn::default();
         assert_eq!(
             "{ foo (f , x) }",
+            format!("{}", ext.call_function_from_sig(&sig))
+        )
+    }
+
+    #[test]
+    fn test_call_method_from_sig() {
+        let sig: Signature = syn::parse_str("fn foo(&self) -> u8").unwrap();
+        let mut ext = ExternaliseFn::default();
+        ext.current_impl_ty = Some(syn::parse_str("bar::Bar").unwrap());
+        assert_eq!(
+            "{ < bar :: Bar > :: foo (self_) }",
             format!("{}", ext.call_function_from_sig(&sig))
         )
     }
