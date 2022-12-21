@@ -21,6 +21,8 @@ struct Cli {
     dir: PathBuf,
     #[arg(default_value = "foo.rs", help = "list of files to ignore, separated by space")]
     ignore: Vec<String>,
+    #[arg(short = 'n', long, help = "if true will perform a dry run, returning the files to the stdout")]
+    dry: bool,
 }
 
 // add #[repr(C)]
@@ -179,6 +181,7 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
 
 fn main() {
     let args = Cli::parse();
+    println!("looking at... {}", args.dir.display());
     let entries = args.dir.read_dir().expect("read_dir call failed");
     for entry_res in entries {
         let entry = entry_res.unwrap();
@@ -198,7 +201,11 @@ fn main() {
             externalised_fn.visit_file(&parsed_file);
             let mut parsed_file_tokens = quote!(#parsed_file);
             externalised_fn.to_tokens(&mut parsed_file_tokens);
-            println!("{}", parsed_file_tokens)
+            if args.dry {
+                println!("{}", parsed_file_tokens)
+            } else {
+                
+            }
         }
     }
 }
