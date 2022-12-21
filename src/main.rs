@@ -4,8 +4,8 @@ use clap::Parser;
 use syn::parse::{Parse, ParseStream};
 use syn::visit::{self, Visit};
 use syn::{
-    token, FnArg, Ident, ImplItemMethod, ItemFn, ItemImpl, Lifetime, Pat, PatIdent, PatType,
-    Signature, Token,
+    FnArg, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
+    Signature,
 };
 use syn::{
     visit_mut::{self, VisitMut},
