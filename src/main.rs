@@ -9,7 +9,7 @@ use syn::{
     visit_mut::{self, VisitMut},
     Attribute, Data, Expr, ItemEnum, ItemStruct, Lit, LitInt, Type, Visibility,
 };
-use syn::{Abi, Block, ImplItemMethod, ItemFn, Signature};
+use syn::{Abi, Block, ImplItemMethod, ItemFn, ItemImpl, Signature};
 
 use quote::{format_ident, quote, ToTokens};
 
@@ -19,7 +19,7 @@ struct Cli {
     #[arg(default_value = "src/")]
     dir: PathBuf,
     #[arg(default_value = "foo.rs")]
-    ignore: Vec<OsString>,
+    ignore: Vec<String>,
 }
 
 // add #[repr(C)]
@@ -66,6 +66,8 @@ impl VisitMut for AddReprC {
 // are converted to `#[no_mangle] pub extern "C" fn foo_method_ffi(&self: Foo,arg1: X, arg2: &Y) -> bool`
 #[derive(Debug, Clone, Default)]
 struct ExternaliseFn {
+    // only set if not a trait method
+    current_impl_name: Option<Type>,
     externalised_fn_buf: Vec<ItemFn>,
 }
 
@@ -126,6 +128,10 @@ impl ExternaliseFn {
 }
 
 impl<'ast> Visit<'ast> for ExternaliseFn {
+    fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
+        visit::visit_item_impl(self, item_impl);
+    }
+
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
         self.handle_item_fn(item_fn);
         visit::visit_item_fn(self, item_fn);
@@ -148,7 +154,8 @@ fn main() {
             && entry
                 .path()
                 .file_name()
-                .map_or(true, |n| !args.ignore.contains(n))
+                .map(|n| n.to_string_lossy())
+                .map_or(true, |n| !args.ignore.contains(&n.to_string()))
         {
             let mut file = File::open(entry.path()).expect("reading file in src/ failed");
             let mut src = String::new();
