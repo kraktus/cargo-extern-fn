@@ -1,15 +1,14 @@
-use std::ffi::{OsStr, OsString};
+
 use std::{fs::File, io::Read, path::PathBuf};
 
-use clap::{ArgAction, Parser};
+use clap::{Parser};
 use syn::parse::{Parse, ParseStream};
 use syn::visit::{self, Visit};
 use syn::{
-    parse_quote,
     visit_mut::{self, VisitMut},
-    Attribute, Data, Expr, ItemEnum, ItemStruct, Lit, LitInt, Type, Visibility,
+    Attribute, ItemEnum, ItemStruct, Type, Visibility,
 };
-use syn::{Abi, Block, ImplItemMethod, ItemFn, ItemImpl, Signature};
+use syn::{ImplItemMethod, ItemFn, ItemImpl, Signature};
 
 use quote::{format_ident, quote, ToTokens};
 
