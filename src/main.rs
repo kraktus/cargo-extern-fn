@@ -11,7 +11,7 @@ use syn::{
     Attribute, ItemEnum, ItemStruct, Type, Visibility,
 };
 use syn::{
-    FnArg, GenericParam, Generics, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
+    FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
     Signature, Token, WhereClause, WherePredicate,
 };
 
@@ -141,6 +141,14 @@ fn union(g1: Generics, g2: Generics) -> Generics {
     }
 }
 
+fn get_ident(ty: &Type) -> Option<&Ident> {
+    if let Type::Path(path_ty) = ty {
+        path_ty.path.get_ident()
+    } else {
+        None
+    }
+}
+
 impl ExternaliseFn {
     fn handle_item_fn(&mut self, item_fn: &ItemFn) {
         if item_fn.sig.asyncness.is_none()
@@ -152,7 +160,17 @@ impl ExternaliseFn {
             let mut extern_fn = item_fn.clone();
             extern_fn.attrs.push(outer_attr("#[no_mangle]"));
             extern_fn.sig.abi = Some(syn::parse_str(r#"extern "C""#).unwrap());
-            extern_fn.sig.ident = format_ident!("{}_ffi", extern_fn.sig.ident);
+            extern_fn.sig.ident = format_ident!(
+                "ffi_{}{}",
+                self.current_impl_ty
+                    .as_ref()
+                    .and_then(|ty| Some(format!(
+                        "{}_",
+                        get_ident(ty)?.to_string().to_ascii_lowercase()
+                    )))
+                    .unwrap_or_default(),
+                extern_fn.sig.ident
+            );
             extern_fn.sig.generics = self
                 .current_generic_bounds
                 .clone()
@@ -249,8 +267,8 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
 
 fn main() {
     let args = Cli::parse();
-    println!("{args:?}");
-    println!("looking at... {}", args.dir.display());
+    eprintln!("{args:?}");
+    eprintln!("looking at... {}", args.dir.display());
     let entries = args.dir.read_dir().expect("read_dir call failed");
     for entry_res in entries {
         let entry = entry_res.unwrap();
@@ -261,7 +279,7 @@ fn main() {
                 .map(|n| n.to_string_lossy())
                 .map_or(true, |n| !args.ignore.contains(&n.to_string()))
         {
-            println!("scanning file: {:?}", entry.path());
+            eprintln!("scanning file: {:?}", entry.path());
             let mut file = File::open(entry.path()).expect("reading file in src/ failed");
             let mut src = String::new();
             file.read_to_string(&mut src).expect("Unable to read file");

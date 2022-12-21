@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[allow(unused_variables, dead_code)]
 
 pub struct Foo;
@@ -29,6 +31,14 @@ impl Baz {
             Self::A => "A",
             Self::B => "B",
         }
+    }
+}
+
+pub struct Gen<T>(T);
+
+impl<T: Display + Copy> Gen<T> {
+    pub fn to_string(&self) -> String {
+        format!("{}", self.0)
     }
 }
 
