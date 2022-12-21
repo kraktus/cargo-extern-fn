@@ -1,16 +1,18 @@
+use std::collections::HashSet;
 use std::fs;
 use std::{fs::File, io::Read, path::PathBuf};
 
 use clap::Parser;
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::{Pair, Punctuated};
 use syn::visit::{self, Visit};
-use syn::{
-    FnArg, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
-    Signature,
-};
 use syn::{
     visit_mut::{self, VisitMut},
     Attribute, ItemEnum, ItemStruct, Type, Visibility,
+};
+use syn::{
+    FnArg, GenericParam, Generics, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
+    Signature, Token, WhereClause, WherePredicate,
 };
 
 use quote::{format_ident, quote, ToTokens};
@@ -18,11 +20,28 @@ use quote::{format_ident, quote, ToTokens};
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
-    #[arg(default_value = "src/", help = "directory to look for the code to modify")]
+    /// automatically set by cargo as first paramater, TODO fix it
+    #[arg(default_value = "extern-fn")]
+    ghost_value: String,
+    #[arg(
+        short,
+        long,
+        default_value = "src/",
+        help = "directory to look for the code to modify"
+    )]
     dir: PathBuf,
-    #[arg(default_value = "foo.rs", help = "list of files to ignore, separated by space")]
+    #[arg(
+        short,
+        long,
+        default_value = "foo.rs",
+        help = "list of files to ignore, separated by space"
+    )]
     ignore: Vec<String>,
-    #[arg(short = 'n', long, help = "if true will perform a dry run, returning the files to the stdout")]
+    #[arg(
+        short = 'n',
+        long,
+        help = "if true will perform a dry run, returning the files to the stdout"
+    )]
     dry: bool,
 }
 
@@ -72,6 +91,7 @@ impl VisitMut for AddReprC {
 struct ExternaliseFn {
     // only set if not a trait method
     current_impl_ty: Option<Type>,
+    current_generic_bounds: Option<Generics>,
     externalised_fn_buf: Vec<ItemFn>,
 }
 
@@ -80,6 +100,44 @@ impl ToTokens for ExternaliseFn {
         for item_fn in self.externalised_fn_buf.iter() {
             item_fn.to_tokens(tokens)
         }
+    }
+}
+
+fn union(g1: Generics, g2: Generics) -> Generics {
+    let g1_param_sets: HashSet<GenericParam> = HashSet::from_iter(g1.params);
+    let g2_param_sets: HashSet<GenericParam> = HashSet::from_iter(g2.params);
+    let union_params = <Punctuated<GenericParam, Token![,]>>::from_iter(
+        g1_param_sets
+            .union(&g2_param_sets)
+            .cloned()
+            .into_iter()
+            .map(|p| Pair::new(p, Some(<Token![,]>::default()))),
+    );
+
+    let g1_where_clause: Option<HashSet<WherePredicate>> =
+        g1.where_clause.map(|w| HashSet::from_iter(w.predicates));
+    let g2_where_clause: Option<HashSet<WherePredicate>> =
+        g2.where_clause.map(|w| HashSet::from_iter(w.predicates));
+    let union_where = g1_where_clause
+        .or(g2_where_clause.clone())
+        .map(|g| WhereClause {
+            where_token: <Token![where]>::default(),
+            // if g1_where_clause is some, correct behavior
+            // if only g2_where_clause is some, then union is idempotent
+            predicates: <Punctuated<WherePredicate, Token![,]>>::from_iter(
+                g2_where_clause
+                    .clone()
+                    .map_or(g.clone(), |g2| g.union(&g2).cloned().collect())
+                    .into_iter()
+                    .map(|p| Pair::new(p, Some(<Token![,]>::default()))),
+            ),
+        });
+
+    Generics {
+        lt_token: g1.lt_token.or(g2.lt_token),
+        params: union_params,
+        gt_token: g1.gt_token.or(g2.gt_token),
+        where_clause: union_where,
     }
 }
 
@@ -95,12 +153,18 @@ impl ExternaliseFn {
             extern_fn.attrs.push(outer_attr("#[no_mangle]"));
             extern_fn.sig.abi = Some(syn::parse_str(r#"extern "C""#).unwrap());
             extern_fn.sig.ident = format_ident!("{}_ffi", extern_fn.sig.ident);
+            extern_fn.sig.generics = self
+                .current_generic_bounds
+                .clone()
+                .map_or(extern_fn.sig.generics.clone(), |g1| {
+                    union(g1, extern_fn.sig.generics)
+                });
             for arg in extern_fn.sig.inputs.iter_mut() {
                 if let FnArg::Receiver(rec) = arg {
                     let name = self
                         .current_impl_ty
                         .as_ref()
-                        .expect("Method not in an struct/enum impl");
+                        .expect("Method not in an struct/enum impl: {}");
                     let fn_arg: FnArg =
                         syn::parse2(match (rec.reference.clone(), rec.mutability) {
                             (None, None) => quote!(self_: #name),
@@ -160,14 +224,17 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         if item_impl.trait_.is_none() {
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
+            self.current_generic_bounds = Some(item_impl.generics.clone());
         } else {
-            self.current_impl_ty = None
+            self.current_impl_ty = None;
+            self.current_generic_bounds = None;
         }
         visit::visit_item_impl(self, item_impl);
     }
 
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
         self.current_impl_ty = None;
+        self.current_generic_bounds = None;
         self.handle_item_fn(item_fn);
         visit::visit_item_fn(self, item_fn);
     }
@@ -182,6 +249,7 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
 
 fn main() {
     let args = Cli::parse();
+    println!("{args:?}");
     println!("looking at... {}", args.dir.display());
     let entries = args.dir.read_dir().expect("read_dir call failed");
     for entry_res in entries {
@@ -193,6 +261,7 @@ fn main() {
                 .map(|n| n.to_string_lossy())
                 .map_or(true, |n| !args.ignore.contains(&n.to_string()))
         {
+            println!("scanning file: {:?}", entry.path());
             let mut file = File::open(entry.path()).expect("reading file in src/ failed");
             let mut src = String::new();
             file.read_to_string(&mut src).expect("Unable to read file");
@@ -205,7 +274,8 @@ fn main() {
             if args.dry {
                 println!("{parsed_file_tokens}")
             } else {
-                fs::write(entry.path(), format!("{parsed_file_tokens}")).expect("saving code changes failed");
+                fs::write(entry.path(), format!("{parsed_file_tokens}"))
+                    .expect("saving code changes failed");
             }
         }
     }
