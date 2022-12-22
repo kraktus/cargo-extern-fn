@@ -32,6 +32,13 @@ impl Person {
             Citizen::Minor
         }
     }
+    /// extern_fn_skip
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
-fn main() {}
+fn main() {
+    let p = Person::new(45, "john".to_string());
+    println!("{}", p.name())
+}

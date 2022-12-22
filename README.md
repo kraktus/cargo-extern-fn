@@ -1,6 +1,6 @@
 # cargo-extern-fn
 
-A cargo subcommand used to convert rust crate into a set of extern-fns suitable for [cbindgen](https://github.com/eqrion/cbindgen).
+A cargo subcommand used to convert rust crate into a set of extern-fns suitable for [cbindgen](https://github.com/eqrion/cbindgen). Use the `/// extern_fn_skip` like an attribute to skip items.
 
 ## Installation
 
@@ -24,6 +24,11 @@ pub enum Baz {
 impl Baz {
     pub fn to_b(&mut self) {
         *self = Self::B;
+    }
+
+    /// extern_fn_skip
+    pub fn foo() -> String {
+        "foo".into()
     }
 }
 
@@ -54,6 +59,11 @@ pub enum Baz {
 impl Baz {
     pub fn to_b(&mut self) {
         *self = Self::B;
+    }
+
+    /// extern_fn_skip
+    pub fn foo() -> String {
+        "foo".into()
     }
 }
 #[repr(C)]

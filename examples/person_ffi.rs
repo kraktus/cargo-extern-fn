@@ -27,8 +27,15 @@ impl Person {
             Citizen::Minor
         }
     }
+    #[doc = " extern_fn_skip"]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
-fn main() {}
+fn main() {
+    let p = Person::new(45, "john".to_string());
+    println!("{}", p.name())
+}
 #[no_mangle]
 pub extern "C" fn ffi_person_new(age: usize, name: String) -> Person {
     <Person>::new(age, name)

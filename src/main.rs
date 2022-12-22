@@ -13,7 +13,9 @@ use syn::{
     Attribute, ItemEnum, ItemStruct, Type, Visibility,
 };
 use syn::{
-    FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
+    FnArg, GenericParam, Generics, Ident, ImplItemMethod, Item, ItemConst, ItemExternCrate, ItemFn,
+    ItemForeignMod, ItemImpl, ItemMacro, ItemMacro2, ItemMod, ItemStatic, ItemTrait,
+    ItemTraitAlias, ItemType, ItemUnion, ItemUse, Lit, Meta, MetaNameValue, Pat, PatIdent, PatType,
     Signature, Token, WhereClause, WherePredicate,
 };
 
@@ -85,6 +87,17 @@ impl VisitMut for AddReprC {
         }
         visit_mut::visit_item_struct_mut(self, struct_);
     }
+
+    fn visit_item_mut(&mut self, i: &mut Item) {
+        if let Some(attrs) = attrs(i) {
+            if attrs
+                .iter()
+                .all(|a| !meta_is_extern_fn_skip(a.parse_meta()))
+            {
+                visit_mut::visit_item_mut(self, i)
+            }
+        }
+    }
 }
 // for each file, add at the end of it its externalised fn
 // regular `pub fn foo(arg1: X, arg2: &Y) -> bool`
@@ -150,6 +163,43 @@ fn union(g1: Generics, g2: Generics) -> Generics {
     }
 }
 
+fn attrs(item: &Item) -> Option<&Vec<Attribute>> {
+    match item {
+        Item::ExternCrate(ItemExternCrate { attrs, .. })
+        | Item::Use(ItemUse { attrs, .. })
+        | Item::Static(ItemStatic { attrs, .. })
+        | Item::Const(ItemConst { attrs, .. })
+        | Item::Fn(ItemFn { attrs, .. })
+        | Item::Mod(ItemMod { attrs, .. })
+        | Item::ForeignMod(ItemForeignMod { attrs, .. })
+        | Item::Type(ItemType { attrs, .. })
+        | Item::Struct(ItemStruct { attrs, .. })
+        | Item::Enum(ItemEnum { attrs, .. })
+        | Item::Union(ItemUnion { attrs, .. })
+        | Item::Trait(ItemTrait { attrs, .. })
+        | Item::TraitAlias(ItemTraitAlias { attrs, .. })
+        | Item::Impl(ItemImpl { attrs, .. })
+        | Item::Macro(ItemMacro { attrs, .. })
+        | Item::Macro2(ItemMacro2 { attrs, .. }) => Some(attrs),
+        Item::Verbatim(_) => None,
+        _ => unreachable!(),
+    }
+}
+
+// return true if there is a doc comment of the type [doc = "extern_fn_skip"]`
+fn meta_is_extern_fn_skip(meta: syn::Result<Meta>) -> bool {
+    if let Ok(Meta::NameValue(MetaNameValue {
+        path,
+        lit: Lit::Str(lit_str),
+        ..
+    })) = meta
+    {
+        path.is_ident("doc") && lit_str.value().trim() == "extern_fn_skip"
+    } else {
+        false
+    }
+}
+
 // return the lower-cased version of the ident of a type, with a trailing `_`
 // the trailing underscore ensure it will not result in a keyword
 // if the type contains generics such as `Foo<T>`, scrap them,
@@ -174,8 +224,8 @@ impl ExternaliseFn {
         if item_fn.sig.asyncness.is_none()
             && item_fn.sig.abi.is_none()
             && matches!(item_fn.vis, Visibility::Public(_))
-            && item_fn.attrs.is_empty()
-        // let's start simple by not handling fn with attributes
+            // do not handle function with `cfg` attributes for the moment
+            && item_fn.attrs.iter().all(|a| !a.path.is_ident("cfg") && !meta_is_extern_fn_skip(a.parse_meta()))
         {
             let mut extern_fn = item_fn.clone();
             trace!("handling fn {:?}", extern_fn.sig.ident);
@@ -270,6 +320,17 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
         visit::visit_item_impl(self, item_impl);
         self.current_impl_ty = None;
         self.current_generic_bounds = None;
+    }
+
+    fn visit_item(&mut self, i: &'ast Item) {
+        if let Some(attrs) = attrs(i) {
+            if attrs
+                .iter()
+                .all(|a| !meta_is_extern_fn_skip(a.parse_meta()))
+            {
+                visit::visit_item(self, i)
+            }
+        }
     }
 
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
