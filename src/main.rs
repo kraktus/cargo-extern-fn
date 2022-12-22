@@ -7,12 +7,12 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::{Pair, Punctuated};
 use syn::visit::{self, Visit};
 use syn::{
-    visit_mut::{self, VisitMut},
-    Attribute, ItemEnum, ItemStruct, Type, Visibility,
+    parse_quote, FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat,
+    PatIdent, PatType, PathSegment, Signature, Token, WhereClause, WherePredicate,
 };
 use syn::{
-    FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
-    Signature, Token, WhereClause, WherePredicate, PathSegment, parse_quote,
+    visit_mut::{self, VisitMut},
+    Attribute, ItemEnum, ItemStruct, Type, Visibility,
 };
 
 use quote::{format_ident, quote, ToTokens};
@@ -144,11 +144,11 @@ fn union(g1: Generics, g2: Generics) -> Generics {
 
 fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
-        let mut segs_without_generics = vec![]; 
+        let mut segs_without_generics = vec![];
         for p in path_ty.path.segments.iter() {
             segs_without_generics.push(p.ident.clone().to_string().to_ascii_lowercase());
             if !p.arguments.is_none() {
-                break
+                break;
             }
         }
         Some(syn::parse_str(&segs_without_generics.join("_")).unwrap())
@@ -345,6 +345,9 @@ mod tests {
     fn test_ident2() {
         let ty: Type = syn::parse_str("foo::Gen<T>").unwrap();
         println!("{ty:?}");
-        assert_eq!(Some(Ident::new("foo_gen", Span::call_site())), get_ident(&ty))
+        assert_eq!(
+            Some(Ident::new("foo_gen", Span::call_site())),
+            get_ident(&ty)
+        )
     }
 }

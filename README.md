@@ -72,7 +72,7 @@ pub extern "C" fn ffi_baz_to_b(self_: &mut Baz) {
     <Baz>::to_b(self_)
 }
 #[no_mangle]
-pub extern "C" fn ffi_to_string<T: Display + Copy>(self_: &Gen<T>) -> String {
+pub extern "C" fn ffi_gen_to_string<T: Display + Copy>(self_: &Gen<T>) -> String {
     <Gen<T>>::to_string(self_)
 }
 ```
