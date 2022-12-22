@@ -285,7 +285,11 @@ fn main() {
                 .path()
                 .file_name()
                 .map(|n| n.to_string_lossy())
-                .map_or(true, |n| !args.ignore.contains(&n.to_string()))
+                .map_or(true, |n| {
+                    let file_name = n.to_string();
+                    let extension = file_name.split_once('.').unwrap().1;
+                    extension == "rs" && !args.ignore.contains(&file_name)
+                    })
         {
             eprintln!("scanning file: {:?}", entry.path());
             let mut file = File::open(entry.path()).expect("reading file in src/ failed");
