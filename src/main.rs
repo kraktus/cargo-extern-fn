@@ -170,7 +170,7 @@ fn get_ident(ty: &Type) -> Option<Ident> {
 }
 
 impl ExternaliseFn {
-    fn handle_item_fn(&mut self, item_fn: &ItemFn) {
+    fn handle_item_fn(&mut self, item_fn: &ItemFn, ty: Option<Type>, generics: Option<Generics>) {
         if item_fn.sig.asyncness.is_none()
             && item_fn.sig.abi.is_none()
             && matches!(item_fn.vis, Visibility::Public(_))
@@ -183,24 +183,19 @@ impl ExternaliseFn {
             extern_fn.sig.abi = Some(syn::parse_str(r#"extern "C""#).unwrap());
             extern_fn.sig.ident = format_ident!(
                 "ffi_{}{}",
-                self.current_impl_ty
-                    .as_ref()
+                ty.as_ref()
                     .and_then(|ty| Some(get_ident(ty)?.to_string()))
                     .unwrap_or_default(),
                 extern_fn.sig.ident
             );
-            extern_fn.sig.generics = self
-                .current_generic_bounds
+            extern_fn.sig.generics = generics
                 .clone()
                 .map_or(extern_fn.sig.generics.clone(), |g1| {
                     union(g1, extern_fn.sig.generics)
                 });
             for arg in extern_fn.sig.inputs.iter_mut() {
                 if let FnArg::Receiver(rec) = arg {
-                    let name = self
-                        .current_impl_ty
-                        .as_ref()
-                        .expect("Method not in an struct/enum impl: {}");
+                    let name = ty.as_ref().expect("Method not in an struct/enum impl");
                     let fn_arg: FnArg =
                         syn::parse2(match (rec.reference.clone(), rec.mutability) {
                             (None, None) => quote!(self_: #name),
@@ -273,19 +268,23 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
             self.current_generic_bounds = None;
         }
         visit::visit_item_impl(self, item_impl);
+        self.current_impl_ty = None;
+        self.current_generic_bounds = None;
     }
 
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
-        self.current_impl_ty = None;
-        self.current_generic_bounds = None;
-        self.handle_item_fn(item_fn);
+        self.handle_item_fn(item_fn, None, None);
         visit::visit_item_fn(self, item_fn);
     }
 
     fn visit_impl_item_method(&mut self, item_method: &'ast ImplItemMethod) {
         let item_fn: ItemFn =
             syn::parse2(item_method.to_token_stream()).expect("from method to bare fn failed");
-        self.handle_item_fn(&item_fn);
+        self.handle_item_fn(
+            &item_fn,
+            self.current_impl_ty.clone(),
+            self.current_generic_bounds.clone(),
+        );
         visit::visit_impl_item_method(self, item_method);
     }
 }
