@@ -103,6 +103,10 @@ impl ToTokens for ExternaliseFn {
     }
 }
 
+// return the union of both generics constraints
+// it's the union in term of quantity but it's effectively
+// the intersection in terms of predicates
+//
 // TODO how to make it shorter/better/faster/stronger?
 fn union(g1: Generics, g2: Generics) -> Generics {
     let g1_param_sets: HashSet<GenericParam> = HashSet::from_iter(g1.params);
@@ -142,6 +146,9 @@ fn union(g1: Generics, g2: Generics) -> Generics {
     }
 }
 
+// return the lower-cased version of the ident of a type
+// if the type contains generics such as `Foo<T>`, scrap them, 
+// so in our example it would be converted to `foo`
 fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
         let mut segs_without_generics = vec![];
@@ -217,6 +224,11 @@ impl ExternaliseFn {
         }
     }
 
+    // given a function signature `fn foo(u: usize, bar: &str) -> bool`
+    // return an expression calling that function:
+    // `foo(u, bar)`
+    //
+    // TODO would it be better if trying to build it as a `syn::Call` type?
     fn call_function_from_sig(&self, sig: &Signature) -> proc_macro2::TokenStream {
         let fn_ident = format!(
             "{}{}",
@@ -228,6 +240,7 @@ impl ExternaliseFn {
         );
         let mut args_buf = proc_macro2::TokenStream::new();
         let mut iter_peek = sig.inputs.iter().peekable();
+        // we scrap the types of the signature to effectively use their idents as arguments
         while let Some(arg) = iter_peek.next() {
             match arg {
                 FnArg::Receiver(_) => quote!(self_).to_tokens(&mut args_buf),
