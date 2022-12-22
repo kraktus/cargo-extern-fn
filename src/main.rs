@@ -162,6 +162,7 @@ fn get_ident(ty: &Type) -> Option<Ident> {
                 break;
             }
         }
+        dbg!(segs_without_generics.join("_"));
         Some(syn::parse_str(&segs_without_generics.join("_")).unwrap())
     } else {
         None
