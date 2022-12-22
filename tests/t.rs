@@ -42,11 +42,11 @@ impl<T: Display + Copy> Gen<T> {
     }
 }
 
-pub fn foo(f: Foo, x: u64) -> bool {
+pub fn foo(_f: Foo, _x: u64) -> bool {
     true
 }
 
-fn bar(f: Foo, x: u64) -> bool {
+fn bar(_f: Foo, _x: u64) -> bool {
     false
 }
 

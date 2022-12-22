@@ -7,8 +7,8 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::{Pair, Punctuated};
 use syn::visit::{self, Visit};
 use syn::{
-    parse_quote, FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat,
-    PatIdent, PatType, PathSegment, Signature, Token, WhereClause, WherePredicate,
+    FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat,
+    PatIdent, PatType, Signature, Token, WhereClause, WherePredicate,
 };
 use syn::{
     visit_mut::{self, VisitMut},
