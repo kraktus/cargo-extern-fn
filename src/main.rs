@@ -27,7 +27,7 @@ struct Cli {
         short,
         long,
         default_value = "src/",
-        help = "directory to look for the code to modify"
+        help = "directory to look for the code to be externalised"
     )]
     dir: PathBuf,
     #[arg(
@@ -40,7 +40,7 @@ struct Cli {
     #[arg(
         short = 'n',
         long,
-        help = "if true will perform a dry run, returning the files to the stdout"
+        help = "if set will perform a dry run, returning the modified content of files to the stdout"
     )]
     dry: bool,
 }
@@ -82,11 +82,11 @@ impl VisitMut for AddReprC {
         visit_mut::visit_item_struct_mut(self, struct_);
     }
 }
-// for each file, add at the end of it externalised fn
+// for each file, add at the end of it its externalised fn
 // regular `pub fn foo(arg1: X, arg2: &Y) -> bool`
-// are converted to `#[no_mangle] pub extern "C" fn foo_ffi(arg1: X, arg2: &Y) -> bool`
+// are converted to `#[no_mangle] pub extern "C" fn ffi_foo(arg1: X, arg2: &Y) -> bool`
 // method `pub fn foo_method(&self,arg1: X, arg2: &Y) -> bool`
-// are converted to `#[no_mangle] pub extern "C" fn foo_method_ffi(self_: &Foo,arg1: X, arg2: &Y) -> bool`
+// are converted to `#[no_mangle] pub extern "C" fn ffi_foo_method(self_: &Foo,arg1: X, arg2: &Y) -> bool`
 #[derive(Debug, Clone, Default)]
 struct ExternaliseFn {
     // only set if not a trait method
@@ -288,8 +288,10 @@ fn main() {
                 .map_or(true, |n| {
                     let file_name = n.to_string();
                     let extension = file_name.split_once('.').unwrap().1;
-                    extension == "rs" && !args.ignore.contains(&file_name) && !file_name.contains("ffi")
-                    })
+                    extension == "rs"
+                        && !args.ignore.contains(&file_name)
+                        && !file_name.contains("ffi")
+                })
         {
             eprintln!("scanning file: {:?}", entry.path());
             let mut file = File::open(entry.path()).expect("reading file in src/ failed");
