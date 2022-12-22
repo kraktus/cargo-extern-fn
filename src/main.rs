@@ -288,7 +288,7 @@ fn main() {
                 .map_or(true, |n| {
                     let file_name = n.to_string();
                     let extension = file_name.split_once('.').unwrap().1;
-                    extension == "rs" && !args.ignore.contains(&file_name)
+                    extension == "rs" && !args.ignore.contains(&file_name) && !file_name.contains("ffi")
                     })
         {
             eprintln!("scanning file: {:?}", entry.path());
