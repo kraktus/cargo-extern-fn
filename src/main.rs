@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::{fs::File, io::Read, path::PathBuf};
 
-use clap::Parser;
+use clap::{Parser, ArgAction};
+use env_logger::{Builder, Target};
+use log::{LevelFilter, debug, info, trace};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::{Pair, Punctuated};
 use syn::visit::{self, Visit};
@@ -43,6 +45,8 @@ struct Cli {
         help = "if set will perform a dry run, returning the modified content of files to the stdout"
     )]
     dry: bool,
+    #[arg(short, long, action = ArgAction::Count, default_value_t = 2)]
+    verbose: u8,
 }
 
 // add #[repr(C)]
@@ -288,8 +292,21 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
 
 fn main() {
     let args = Cli::parse();
-    eprintln!("{args:?}");
-    eprintln!("looking at... {}", args.dir.display());
+    let mut builder = Builder::new();
+    builder
+        .filter(
+            None,
+            match args.verbose {
+                0 => LevelFilter::Error,
+                1 => LevelFilter::Info,
+                2 => LevelFilter::Debug,
+                _ => LevelFilter::Trace,
+            },
+        )
+        .default_format()
+        .format_timestamp(None)
+        .init();
+    debug!("looking at... {}", args.dir.display());
     let entries = args.dir.read_dir().expect("read_dir call failed");
     for entry_res in entries {
         let entry = entry_res.unwrap();
@@ -306,14 +323,18 @@ fn main() {
                         && !file_name.contains("ffi")
                 })
         {
-            eprintln!("scanning file: {:?}", entry.path());
+            info!("scanning file: {:?}", entry.path());
             let mut file = File::open(entry.path()).expect("reading file in src/ failed");
             let mut src = String::new();
             file.read_to_string(&mut src).expect("Unable to read file");
             let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-            AddReprC.visit_file_mut(&mut parsed_file);
+            trace!("Starting AddReprC pass");
+            AddReprC.visit_file_mut(&mut parsed_file); 
+            trace!("Finished AddReprC pass");
             let mut externalised_fn = ExternaliseFn::default();
+            trace!("Starting ExternaliseFn pass");
             externalised_fn.visit_file(&parsed_file);
+            trace!("Finished ExternaliseFn pass");
             let mut parsed_file_tokens = quote!(#parsed_file);
             externalised_fn.to_tokens(&mut parsed_file_tokens);
             if args.dry {
