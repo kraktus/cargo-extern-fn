@@ -2,19 +2,19 @@ use std::collections::HashSet;
 use std::fs;
 use std::{fs::File, io::Read, path::PathBuf};
 
-use clap::{Parser, ArgAction};
+use clap::{ArgAction, Parser};
 use env_logger::{Builder, Target};
-use log::{LevelFilter, debug, info, trace};
+use log::{debug, info, trace, LevelFilter};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::{Pair, Punctuated};
 use syn::visit::{self, Visit};
 use syn::{
-    FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat,
-    PatIdent, PatType, Signature, Token, WhereClause, WherePredicate,
-};
-use syn::{
     visit_mut::{self, VisitMut},
     Attribute, ItemEnum, ItemStruct, Type, Visibility,
+};
+use syn::{
+    FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
+    Signature, Token, WhereClause, WherePredicate,
 };
 
 use quote::{format_ident, quote, ToTokens};
@@ -150,9 +150,10 @@ fn union(g1: Generics, g2: Generics) -> Generics {
     }
 }
 
-// return the lower-cased version of the ident of a type
-// if the type contains generics such as `Foo<T>`, scrap them, 
-// so in our example it would be converted to `foo`
+// return the lower-cased version of the ident of a type, with a trailing `_`
+// the trailing underscore ensure it will not result in a keyword
+// if the type contains generics such as `Foo<T>`, scrap them,
+// so in our example it would be converted to `foo_`
 fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
         let mut segs_without_generics = vec![];
@@ -162,8 +163,7 @@ fn get_ident(ty: &Type) -> Option<Ident> {
                 break;
             }
         }
-        dbg!(segs_without_generics.join("_"));
-        Some(syn::parse_str(&segs_without_generics.join("_")).unwrap())
+        Some(format_ident!("{}_", segs_without_generics.join("_")))
     } else {
         None
     }
@@ -185,10 +185,7 @@ impl ExternaliseFn {
                 "ffi_{}{}",
                 self.current_impl_ty
                     .as_ref()
-                    .and_then(|ty| Some(format!(
-                        "{}_",
-                        get_ident(ty)?.to_string().to_ascii_lowercase()
-                    )))
+                    .and_then(|ty| Some(get_ident(ty)?.to_string()))
                     .unwrap_or_default(),
                 extern_fn.sig.ident
             );
@@ -332,7 +329,7 @@ fn main() {
             file.read_to_string(&mut src).expect("Unable to read file");
             let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
             trace!("Starting AddReprC pass");
-            AddReprC.visit_file_mut(&mut parsed_file); 
+            AddReprC.visit_file_mut(&mut parsed_file);
             trace!("Finished AddReprC pass");
             let mut externalised_fn = ExternaliseFn::default();
             trace!("Starting ExternaliseFn pass");
@@ -381,7 +378,7 @@ mod tests {
     fn test_ident() {
         let ty: Type = syn::parse_str("Gen<T>").unwrap();
         println!("{ty:?}");
-        assert_eq!(Some(Ident::new("gen", Span::call_site())), get_ident(&ty))
+        assert_eq!(Some(Ident::new("gen_", Span::call_site())), get_ident(&ty))
     }
 
     #[test]
@@ -389,7 +386,7 @@ mod tests {
         let ty: Type = syn::parse_str("foo::Gen<T>").unwrap();
         println!("{ty:?}");
         assert_eq!(
-            Some(Ident::new("foo_gen", Span::call_site())),
+            Some(Ident::new("foo_gen_", Span::call_site())),
             get_ident(&ty)
         )
     }
