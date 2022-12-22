@@ -12,7 +12,7 @@ use syn::{
 };
 use syn::{
     FnArg, GenericParam, Generics, Ident, ImplItemMethod, ItemFn, ItemImpl, Pat, PatIdent, PatType,
-    Signature, Token, WhereClause, WherePredicate,
+    Signature, Token, WhereClause, WherePredicate, PathSegment, parse_quote,
 };
 
 use quote::{format_ident, quote, ToTokens};
@@ -103,6 +103,7 @@ impl ToTokens for ExternaliseFn {
     }
 }
 
+// TODO how to make it shorter/better/faster/stronger?
 fn union(g1: Generics, g2: Generics) -> Generics {
     let g1_param_sets: HashSet<GenericParam> = HashSet::from_iter(g1.params);
     let g2_param_sets: HashSet<GenericParam> = HashSet::from_iter(g2.params);
@@ -141,9 +142,16 @@ fn union(g1: Generics, g2: Generics) -> Generics {
     }
 }
 
-fn get_ident(ty: &Type) -> Option<&Ident> {
+fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
-        path_ty.path.get_ident()
+        let mut segs_without_generics = vec![]; 
+        for p in path_ty.path.segments.iter() {
+            segs_without_generics.push(p.ident.clone().to_string().to_ascii_lowercase());
+            if !p.arguments.is_none() {
+                break
+            }
+        }
+        Some(syn::parse_str(&segs_without_generics.join("_")).unwrap())
     } else {
         None
     }
@@ -301,6 +309,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use proc_macro2::Span;
+
     use super::*;
 
     #[test]
@@ -322,5 +332,19 @@ mod tests {
             "{ < bar :: Bar > :: foo (self_) }",
             format!("{}", ext.call_function_from_sig(&sig))
         )
+    }
+
+    #[test]
+    fn test_ident() {
+        let ty: Type = syn::parse_str("Gen<T>").unwrap();
+        println!("{ty:?}");
+        assert_eq!(Some(Ident::new("gen", Span::call_site())), get_ident(&ty))
+    }
+
+    #[test]
+    fn test_ident2() {
+        let ty: Type = syn::parse_str("foo::Gen<T>").unwrap();
+        println!("{ty:?}");
+        assert_eq!(Some(Ident::new("foo_gen", Span::call_site())), get_ident(&ty))
     }
 }
