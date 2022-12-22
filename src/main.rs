@@ -177,6 +177,7 @@ impl ExternaliseFn {
         // let's start simple by not handling fn with attributes
         {
             let mut extern_fn = item_fn.clone();
+            trace!("handling fn {:?}", extern_fn.sig.ident);
             extern_fn.attrs.push(outer_attr("#[no_mangle]"));
             extern_fn.sig.abi = Some(syn::parse_str(r#"extern "C""#).unwrap());
             extern_fn.sig.ident = format_ident!(
@@ -268,6 +269,7 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
         if item_impl.trait_.is_none() {
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
             self.current_generic_bounds = Some(item_impl.generics.clone());
+            trace!("Looking at impl of {:?}", get_ident(&*item_impl.self_ty))
         } else {
             self.current_impl_ty = None;
             self.current_generic_bounds = None;
