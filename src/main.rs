@@ -9,6 +9,7 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 use env_logger::Builder;
 use log::{debug, info, LevelFilter};
 use proc_macro2::TokenStream;
+use syn::parse_quote;
 
 mod cbindgen;
 mod cxx;
@@ -106,11 +107,11 @@ fn main() {
             file.read_to_string(&mut src).expect("Unable to read file");
             let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
             let parsed_file_tokens = args.handle_file(&mut parsed_file);
+            let parsed_file_formated = prettyplease::unparse(&parse_quote!(#parsed_file_tokens));
             if args.common.dry {
-                println!("{parsed_file_tokens}")
+                println!("{parsed_file_formated}")
             } else {
-                fs::write(entry.path(), format!("{parsed_file_tokens}"))
-                    .expect("saving code changes failed");
+                fs::write(entry.path(), parsed_file_formated).expect("saving code changes failed");
             }
         }
     }
