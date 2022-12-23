@@ -48,10 +48,10 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
             let mut raw_struct = struct_.clone();
             raw_struct.ident = format_ident!("{}Raw", struct_.ident);
             for field_mut in raw_struct.fields.iter_mut() {
-                field_mut.vis = struct_.vis // make it public, not sure if reusing the span will cause issue
+                field_mut.vis = struct_.vis.clone() // make it public, not sure if reusing the span will cause issue
             }
             self.raw_structs.push(raw_struct);
-            self.idents.insert(struct_.ident);
+            self.idents.insert(struct_.ident.clone());
         }
         visit::visit_item_struct(self, struct_);
     }
@@ -65,7 +65,7 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
                 .all(|v| matches!(v.fields, Fields::Unit))
         // generics not handled by cxx
         {
-            self.idents.insert(enum_.ident);
+            self.idents.insert(enum_.ident.clone());
         }
         visit::visit_item_enum(self, enum_);
     }
@@ -88,7 +88,6 @@ impl Cxx {
         create_raw_struct.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
         let mut parsed_file_tokens = quote!(#parsed_file);
-        externalised_fn.to_tokens(&mut parsed_file_tokens);
         parsed_file_tokens
     }
 }
