@@ -61,13 +61,12 @@ impl VisitMut for AddReprC {
     }
 
     fn visit_item_mut(&mut self, i: &mut Item) {
-        if let Some(attrs) = attrs(i) {
-            if attrs
+        if attrs(i).map_or(true, |attrs| {
+            attrs
                 .iter()
                 .all(|a| !meta_is_extern_fn_skip(a.parse_meta()))
-            {
-                visit_mut::visit_item_mut(self, i)
-            }
+        }) {
+            visit_mut::visit_item_mut(self, i)
         }
     }
 }
@@ -135,7 +134,7 @@ fn union(g1: Generics, g2: Generics) -> Generics {
     }
 }
 
-fn attrs(item: &Item) -> Option<&Vec<Attribute>> {
+pub fn attrs(item: &Item) -> Option<&Vec<Attribute>> {
     match item {
         Item::ExternCrate(ItemExternCrate { attrs, .. })
         | Item::Use(ItemUse { attrs, .. })
@@ -159,7 +158,7 @@ fn attrs(item: &Item) -> Option<&Vec<Attribute>> {
 }
 
 // return true if there is a doc comment of the type [doc = "extern_fn_skip"]`
-fn meta_is_extern_fn_skip(meta: syn::Result<Meta>) -> bool {
+pub fn meta_is_extern_fn_skip(meta: syn::Result<Meta>) -> bool {
     if let Ok(Meta::NameValue(MetaNameValue {
         path,
         lit: Lit::Str(lit_str),
@@ -295,13 +294,12 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
     }
 
     fn visit_item(&mut self, i: &'ast Item) {
-        if let Some(attrs) = attrs(i) {
-            if attrs
+        if attrs(i).map_or(true, |attrs| {
+            attrs
                 .iter()
                 .all(|a| !meta_is_extern_fn_skip(a.parse_meta()))
-            {
-                visit::visit_item(self, i)
-            }
+        }) {
+            visit::visit_item(self, i)
         }
     }
 
