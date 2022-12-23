@@ -1,25 +1,21 @@
 use std::collections::HashSet;
-use std::default;
 
-use clap::{Args, Parser};
+
+
 
 use log::trace;
 use proc_macro2::TokenStream;
-use syn::parse::{Parse, ParseStream};
-use syn::punctuated::{Pair, Punctuated};
+
+
 use syn::visit::{self, Visit};
 use syn::{
-    visit_mut::{self, VisitMut},
-    Attribute, ItemEnum, ItemStruct, Type, Visibility,
+    ItemEnum, ItemStruct, Visibility,
 };
 use syn::{
-    DeriveInput, Fields, FnArg, GenericParam, Generics, Ident, ImplItemMethod, Item, ItemConst,
-    ItemExternCrate, ItemFn, ItemForeignMod, ItemImpl, ItemMacro, ItemMacro2, ItemMod, ItemStatic,
-    ItemTrait, ItemTraitAlias, ItemType, ItemUnion, ItemUse, Lit, Meta, MetaNameValue, Pat,
-    PatIdent, PatType, Signature, Token, WhereClause, WherePredicate,
+    Fields, Ident, Item,
 };
 
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 
 use crate::cbindgen::{attrs, meta_is_extern_fn_skip};
 
@@ -87,7 +83,7 @@ impl Cxx {
         let mut create_raw_struct = CreateRawStruct::default();
         create_raw_struct.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
-        let mut parsed_file_tokens = quote!(#parsed_file);
+        let parsed_file_tokens = quote!(#parsed_file);
         parsed_file_tokens
     }
 }
