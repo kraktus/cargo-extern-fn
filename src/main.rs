@@ -54,7 +54,7 @@ struct CommonArgs {
 #[derive(Subcommand, Debug)]
 enum Cmd {
     Cbindgen(Cbindgen),
-    Cxx, //
+    Cxx,
 }
 
 impl Cli {
