@@ -1,23 +1,21 @@
 use std::collections::HashSet;
 
-
-
 use clap::{Args, Parser};
 
-use log::{trace};
+use log::trace;
 use proc_macro2::TokenStream;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::{Pair, Punctuated};
 use syn::visit::{self, Visit};
 use syn::{
-    FnArg, GenericParam, Generics, Ident, ImplItemMethod, Item, ItemConst,
-    ItemExternCrate, ItemFn, ItemForeignMod, ItemImpl, ItemMacro, ItemMacro2, ItemMod, ItemStatic,
-    ItemTrait, ItemTraitAlias, ItemType, ItemUnion, ItemUse, Lit, Meta, MetaNameValue, Pat,
-    PatIdent, PatType, Signature, Token, WhereClause, WherePredicate,
-};
-use syn::{
     visit_mut::{self, VisitMut},
     Attribute, ItemEnum, ItemStruct, Type, Visibility,
+};
+use syn::{
+    FnArg, GenericParam, Generics, Ident, ImplItemMethod, Item, ItemConst, ItemExternCrate, ItemFn,
+    ItemForeignMod, ItemImpl, ItemMacro, ItemMacro2, ItemMod, ItemStatic, ItemTrait,
+    ItemTraitAlias, ItemType, ItemUnion, ItemUse, Lit, Meta, MetaNameValue, Pat, PatIdent, PatType,
+    Signature, Token, WhereClause, WherePredicate,
 };
 
 use quote::{format_ident, quote, ToTokens};
