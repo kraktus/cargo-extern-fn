@@ -1,6 +1,14 @@
 # cargo-extern-fn
 
-A cargo subcommand used to convert rust crate into a set of extern-fns suitable for [cbindgen](https://github.com/eqrion/cbindgen). Use the `/// extern_fn_skip` like an attribute to skip items.
+A cargo subcommand to be used as a pre-processor to various FFI generation libs from a rust crate. Currently support:
+- [cbindgen](https://github.com/eqrion/cbindgen): generate extern fns from the public APIs.
+- [cxx](https://cxx.rs/index.html): generate `cxx::bridge` from the public APIs.
+
+Use the `/// extern_fn_skip` like an attribute to skip items.
+
+## Status
+
+This tool is very much a work and progress and it is expected to polish the FFI boundaries by hand afterwards.
 
 ## Installation
 

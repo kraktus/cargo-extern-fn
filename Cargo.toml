@@ -11,6 +11,7 @@ proc-macro2 = "1.0"
 quote = "1"
 env_logger = "0.10"
 log = "0.4"
+prettyplease = "0.1.22"
 
 # copied from cargo-expand
 [dependencies.syn]
