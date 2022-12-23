@@ -1,16 +1,16 @@
 use std::collections::HashSet;
-use std::fs;
-use std::{fs::File, io::Read, path::PathBuf};
 
-use clap::{ArgAction, Args, Parser};
-use env_logger::{Builder, Target};
-use log::{debug, info, trace, LevelFilter};
+
+
+use clap::{Args, Parser};
+
+use log::{trace};
 use proc_macro2::TokenStream;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::{Pair, Punctuated};
 use syn::visit::{self, Visit};
 use syn::{
-    parse_quote, FnArg, GenericParam, Generics, Ident, ImplItemMethod, Item, ItemConst,
+    FnArg, GenericParam, Generics, Ident, ImplItemMethod, Item, ItemConst,
     ItemExternCrate, ItemFn, ItemForeignMod, ItemImpl, ItemMacro, ItemMacro2, ItemMod, ItemStatic,
     ItemTrait, ItemTraitAlias, ItemType, ItemUnion, ItemUse, Lit, Meta, MetaNameValue, Pat,
     PatIdent, PatType, Signature, Token, WhereClause, WherePredicate,

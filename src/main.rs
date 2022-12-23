@@ -7,7 +7,7 @@ use std::{
 use cbindgen::Cbindgen;
 use clap::{ArgAction, Args, Parser, Subcommand};
 use env_logger::Builder;
-use log::{debug, info, trace, LevelFilter};
+use log::{debug, info, LevelFilter};
 use proc_macro2::TokenStream;
 
 mod cbindgen;
@@ -60,7 +60,7 @@ enum Cmd {
 impl Cli {
     fn handle_file(&self, file: &mut syn::File) -> TokenStream {
         match &self.cmd {
-            Cmd::Cbindgen(cbindgen) => Cbindgen::handle_file(file),
+            Cmd::Cbindgen(_cbindgen) => Cbindgen::handle_file(file),
             Cmd::Cxx => todo!(),
         }
     }
