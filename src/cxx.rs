@@ -198,7 +198,7 @@ fn impl_from_x_to_y(x: &Ident, y: &Ident, fields: &Fields) -> TokenStream {
             quote!({#(#named_token),*})
         }
         Fields::Unnamed(unnameds) => {
-            let unnamed_token = (0..unnameds.unnamed.len()).map(|i| quote!(x.#i));
+            let unnamed_token = (0..unnameds.unnamed.len()).map(syn::Index::from).map(|i| quote!(x.#i));
             quote!((#(#unnamed_token),*))
         }
         Fields::Unit => unimplemented!("TBD"),
@@ -228,10 +228,12 @@ impl Cxx {
             raw_struct.to_tokens(&mut parsed_file_tokens);
             let ident = raw_struct.ident.to_string();
             let ident_without_raw: Ident = syn::parse_str(&ident[0..ident.len() - 3]).unwrap();
+            trace!("Generating conversion impl of {ident}");
             impl_from_x_to_y(&ident_without_raw, &raw_struct.ident, &raw_struct.fields)
                 .to_tokens(&mut parsed_file_tokens);
             impl_from_x_to_y(&raw_struct.ident, &ident_without_raw, &raw_struct.fields)
                 .to_tokens(&mut parsed_file_tokens);
+            trace!("Finished conversion impl of {ident}");
         }
         parsed_file_tokens
     }

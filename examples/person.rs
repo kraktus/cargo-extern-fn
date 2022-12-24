@@ -1,6 +1,8 @@
+pub struct Age(u8);
+
 // this is a comment
 pub struct Person {
-    age: usize,
+    age: Age,
     name: String,
 }
 
@@ -11,16 +13,19 @@ pub enum Citizen<T> {
 }
 
 impl Person {
-    pub fn new(age: usize, name: String) -> Person {
-        Self { age, name }
+    pub fn new(age: u8, name: String) -> Person {
+        Self {
+            age: Age(age),
+            name,
+        }
     }
 
     pub fn is_adult(&self) -> bool {
-        self.age >= 18
+        self.age.0 >= 18
     }
 
     pub fn bday(&mut self) {
-        self.age += 1
+        self.age.0 += 1
     }
 
     pub fn to_citizen(self) -> Citizen<Person> {

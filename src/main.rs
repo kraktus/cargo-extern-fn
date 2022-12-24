@@ -8,7 +8,7 @@ use cbindgen::Cbindgen;
 use clap::{ArgAction, Args, Parser, Subcommand};
 use cxx::Cxx;
 use env_logger::Builder;
-use log::{debug, info, LevelFilter};
+use log::{debug, info, trace, LevelFilter};
 use proc_macro2::TokenStream;
 use syn::parse_quote;
 
@@ -116,6 +116,7 @@ fn main() {
             file.read_to_string(&mut src).expect("Unable to read file");
             let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
             let parsed_file_tokens = args.handle_file(&mut parsed_file, &mut cxx);
+            trace!("Finished hanlding the file");
             let parsed_file_formated = prettyplease::unparse(&parse_quote!(#parsed_file_tokens));
             if args.common.dry {
                 println!("{parsed_file_formated}")
