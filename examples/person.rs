@@ -6,7 +6,7 @@ pub struct Person {
     name: String,
 }
 
-/// This is a doc comment
+/// This is a doc comment!
 pub enum Citizen<T> {
     Adult(T),
     Minor,

@@ -4,7 +4,7 @@ pub struct Person {
     age: usize,
     name: String,
 }
-#[doc = " This is a doc comment"]
+/// This is a doc comment!
 #[repr(C)]
 pub enum Citizen<T> {
     Adult(T),
@@ -18,16 +18,12 @@ impl Person {
         self.age >= 18
     }
     pub fn bday(&mut self) {
-        self.age += 1
+        self.age += 1;
     }
     pub fn to_citizen(self) -> Citizen<Person> {
-        if self.is_adult() {
-            Citizen::Adult(self)
-        } else {
-            Citizen::Minor
-        }
+        if self.is_adult() { Citizen::Adult(self) } else { Citizen::Minor }
     }
-    #[doc = " extern_fn:skip"]
+    /// extern_fn:skip
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -52,3 +48,4 @@ pub extern "C" fn ffi_person_bday(self_: &mut Person) {
 pub extern "C" fn ffi_person_to_citizen(self_: Person) -> Citizen<Person> {
     <Person>::to_citizen(self_)
 }
+
