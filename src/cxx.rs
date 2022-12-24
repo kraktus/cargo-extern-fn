@@ -188,7 +188,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
     }
 }
 
-fn impl_from_x_to_y(x: Ident, y: Ident, fields: Fields) {
+fn impl_from_x_to_y(x: &Ident, y: &Ident, fields: &Fields) -> TokenStream {
     let body = match fields {
         Fields::Named(nameds) => {
             let named_token = nameds.named.iter().map(|f| {
@@ -203,6 +203,11 @@ fn impl_from_x_to_y(x: Ident, y: Ident, fields: Fields) {
         }
         Fields::Unit => unimplemented!("TBD"),
     };
+    quote!(impl From<#x> for #y {
+        fn from(x: #x) -> Self {
+            Self #body
+        }
+    })
 }
 
 impl Cxx {
@@ -221,6 +226,12 @@ impl Cxx {
         let mut parsed_file_tokens = quote!(#parsed_file);
         for raw_struct in raw_structs {
             raw_struct.to_tokens(&mut parsed_file_tokens);
+            let ident = raw_struct.ident.to_string();
+            let ident_without_raw: Ident = syn::parse_str(&ident[0..ident.len() - 3]).unwrap();
+            impl_from_x_to_y(&ident_without_raw, &raw_struct.ident, &raw_struct.fields)
+                .to_tokens(&mut parsed_file_tokens);
+            impl_from_x_to_y(&raw_struct.ident, &ident_without_raw, &raw_struct.fields)
+                .to_tokens(&mut parsed_file_tokens);
         }
         parsed_file_tokens
     }
