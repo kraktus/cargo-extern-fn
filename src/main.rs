@@ -6,6 +6,7 @@ use std::{
 
 use cbindgen::Cbindgen;
 use clap::{ArgAction, Args, Parser, Subcommand};
+use cxx::Cxx;
 use env_logger::Builder;
 use log::{debug, info, LevelFilter};
 use proc_macro2::TokenStream;
@@ -54,21 +55,27 @@ struct CommonArgs {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    Cbindgen(Cbindgen),
+    Cbindgen,
     Cxx,
 }
 
 impl Cli {
-    fn handle_file(&self, file: &mut syn::File) -> TokenStream {
+    fn handle_file(&self, file: &mut syn::File, cxx: &mut Cxx) -> TokenStream {
         match &self.cmd {
-            Cmd::Cbindgen(_cbindgen) => Cbindgen::handle_file(file),
-            Cmd::Cxx => todo!(),
+            Cmd::Cbindgen => Cbindgen::handle_file(file),
+            Cmd::Cxx => cxx.handle_file(file),
+        }
+    }
+
+    fn finish(&self, cxx: Cxx) {
+        match &self.cmd {
+            Cmd::Cbindgen => (),
+            Cmd::Cxx => cxx.generate_ffi_bridge_and_impl(&self.common.dir),
         }
     }
 }
-
 fn main() {
-    let args = Cli::parse();
+    let mut args = Cli::parse();
     let mut builder = Builder::new();
     builder
         .filter(
@@ -83,6 +90,8 @@ fn main() {
         .default_format()
         .format_timestamp(None)
         .init();
+
+    let mut cxx = Cxx::default();
 
     debug!("looking at... {}", args.common.dir.display());
     let entries = args.common.dir.read_dir().expect("read_dir call failed");
@@ -106,7 +115,7 @@ fn main() {
             let mut src = String::new();
             file.read_to_string(&mut src).expect("Unable to read file");
             let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-            let parsed_file_tokens = args.handle_file(&mut parsed_file);
+            let parsed_file_tokens = args.handle_file(&mut parsed_file, &mut cxx);
             let parsed_file_formated = prettyplease::unparse(&parse_quote!(#parsed_file_tokens));
             if args.common.dry {
                 println!("{parsed_file_formated}")
@@ -115,4 +124,5 @@ fn main() {
             }
         }
     }
+    args.finish(cxx);
 }

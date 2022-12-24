@@ -21,7 +21,11 @@ impl Person {
         self.age += 1;
     }
     pub fn to_citizen(self) -> Citizen<Person> {
-        if self.is_adult() { Citizen::Adult(self) } else { Citizen::Minor }
+        if self.is_adult() {
+            Citizen::Adult(self)
+        } else {
+            Citizen::Minor
+        }
     }
     /// extern_fn:skip
     pub fn name(&self) -> &str {
@@ -48,4 +52,3 @@ pub extern "C" fn ffi_person_bday(self_: &mut Person) {
 pub extern "C" fn ffi_person_to_citizen(self_: Person) -> Citizen<Person> {
     <Person>::to_citizen(self_)
 }
-

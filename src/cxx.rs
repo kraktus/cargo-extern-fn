@@ -1,5 +1,9 @@
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 
+use clap::Args;
 use log::trace;
 use proc_macro2::TokenStream;
 
@@ -9,9 +13,12 @@ use syn::{ItemEnum, ItemStruct, Visibility};
 
 use quote::{format_ident, quote, ToTokens};
 
-use crate::cbindgen::{attrs, get_ident, meta_is_extern_fn_skip};
+use crate::cbindgen::{attrs, get_ident, meta_is_extern_fn_skip, normalise_receiver_arg};
 
-struct Cxx;
+#[derive(Default, Debug)]
+pub struct Cxx {
+    all_cxx_fn: Vec<syn::ItemFn>,
+}
 
 #[derive(Debug, Clone)]
 struct CreateRawStruct {
@@ -89,10 +96,18 @@ struct GatherSignatures {
     // only set if not a trait method
     current_impl_ty: Option<syn::Type>,
     allowed_idents: HashSet<Ident>,
-    externalised_fn_buf: Vec<syn::ItemFn>,
+    cxx_fn_buf: Vec<ItemFn>,
 }
 
 impl GatherSignatures {
+    fn new(allowed_idents: HashSet<Ident>) -> Self {
+        Self {
+            current_impl_ty: None,
+            allowed_idents,
+            cxx_fn_buf: vec![],
+        }
+    }
+
     fn handle_item_fn(
         &mut self,
         item_fn: &ItemFn,
@@ -109,32 +124,14 @@ impl GatherSignatures {
             extern_fn.sig.ident =
                 format_ident!("{}{}", prefix.unwrap_or_default(), extern_fn.sig.ident);
             for arg in extern_fn.sig.inputs.iter_mut() {
-                if let FnArg::Receiver(rec) = arg {
-                    let name = self
-                        .current_impl_ty
-                        .as_ref()
-                        .expect("Method not in an struct/enum impl");
-                    let fn_arg: FnArg =
-                        syn::parse2(match (rec.reference.clone(), rec.mutability) {
-                            (None, None) => quote!(self: #name),
-                            (None, Some(_)) => quote!(self: mut #name),
-                            (Some((_, lifetime_opt)), None) => {
-                                let lifetime =
-                                    lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
-                                quote!(self: &#lifetime #name)
-                            }
-                            (Some((_, lifetime_opt)), Some(_)) => {
-                                let lifetime =
-                                    lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
-                                quote!(self_: &#lifetime mut #name)
-                            }
-                        })
-                        .unwrap();
-                    *arg = fn_arg;
+                if let Some(normalised_arg) =
+                    normalise_receiver_arg(arg, &self.current_impl_ty, None)
+                {
+                    *arg = normalised_arg;
                 }
             }
 
-            self.externalised_fn_buf.push(extern_fn);
+            self.cxx_fn_buf.push(extern_fn);
         }
     }
 }
@@ -169,7 +166,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
             item_fn,
             self.current_impl_ty
                 .clone()
-                .and_then(|ty| Some(get_ident(&ty)?.to_string())),
+                .and_then(|ty| Some(get_ident(&ty)?.to_string().to_lowercase() + "_")),
         );
         visit::visit_item_fn(self, item_fn);
     }
@@ -183,14 +180,27 @@ impl<'ast> Visit<'ast> for GatherSignatures {
 }
 
 impl Cxx {
-    pub fn handle_file(parsed_file: &mut syn::File) -> TokenStream {
+    pub fn handle_file(&mut self, parsed_file: &mut syn::File) -> TokenStream {
         trace!("Starting CreateRawStruct pass");
         let mut create_raw_struct = CreateRawStruct::default();
         create_raw_struct.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
         let (raw_structs, idents) = create_raw_struct.results();
+        trace!("Starting GatherSignatures pass");
+        let mut gather_sig = GatherSignatures::new(idents);
+        gather_sig.visit_file(parsed_file);
+        trace!("Finished GatherSignatures pass");
+        self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
 
         let parsed_file_tokens = quote!(#parsed_file);
         parsed_file_tokens
+    }
+
+    pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
+        let mut lib = File::open(code_dir.join("lib.rs")).expect("reading file in src/ failed");
+        let mut src_lib = String::new();
+        lib.read_to_string(&mut src_lib)
+            .expect("Unable to read file");
+        let mut parsed_file = syn::parse_file(&src_lib).expect("Unable to parse file");
     }
 }
