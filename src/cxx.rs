@@ -18,6 +18,13 @@ use crate::cbindgen::{attrs, get_ident, meta_is_extern_fn_skip, normalise_receiv
 #[derive(Default, Debug)]
 pub struct Cxx {
     all_cxx_fn: Vec<syn::ItemFn>,
+    all_cxx_struct_or_enum: Vec<StructOrEnum> // TODO maybe switch to derive
+}
+
+#[derive(Debug)]
+enum StructOrEnum {
+	S(ItemStruct),
+	E(ItemEnum)
 }
 
 #[derive(Debug, Clone)]
@@ -192,7 +199,10 @@ impl Cxx {
         trace!("Finished GatherSignatures pass");
         self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
 
-        let parsed_file_tokens = quote!(#parsed_file);
+        let mut parsed_file_tokens = quote!(#parsed_file);
+        for raw_struct in raw_structs {
+        	raw_struct.to_tokens(&mut parsed_file_tokens);
+        }
         parsed_file_tokens
     }
 
