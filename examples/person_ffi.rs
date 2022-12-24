@@ -27,7 +27,7 @@ impl Person {
             Citizen::Minor
         }
     }
-    #[doc = " extern_fn_skip"]
+    #[doc = " extern_fn:skip"]
     pub fn name(&self) -> &str {
         &self.name
     }

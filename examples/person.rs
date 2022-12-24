@@ -32,7 +32,7 @@ impl Person {
             Citizen::Minor
         }
     }
-    /// extern_fn_skip
+    /// extern_fn:skip
     pub fn name(&self) -> &str {
         &self.name
     }

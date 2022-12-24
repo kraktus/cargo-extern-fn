@@ -4,7 +4,7 @@ A cargo subcommand to be used as a pre-processor to various FFI generation libs 
 - [cbindgen](https://github.com/eqrion/cbindgen): generate extern fns from the public APIs.
 - [cxx](https://cxx.rs/index.html): generate `cxx::bridge` from the public APIs.
 
-Use the `/// extern_fn_skip` like an attribute to skip items.
+Use the `/// extern_fn:skip` like an attribute to skip items.
 
 ## Status
 
@@ -34,7 +34,7 @@ impl Baz {
         *self = Self::B;
     }
 
-    /// extern_fn_skip
+    /// extern_fn:skip
     pub fn foo() -> String {
         "foo".into()
     }
@@ -53,8 +53,8 @@ pub fn foo(f: Foo, x: u64) -> bool {
 }
 ```
 
-`extern-fn` returns:
-
+`extern-fn cbdingen` returns:
+Note that you have to manually clean up the functions that are not FFI-safe afterwards. PRs to help not select incompatible are welcome.
 ```rust
 // foo.rs
 
@@ -69,7 +69,7 @@ impl Baz {
         *self = Self::B;
     }
 
-    /// extern_fn_skip
+    /// extern_fn:skip
     pub fn foo() -> String {
         "foo".into()
     }

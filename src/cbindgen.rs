@@ -157,7 +157,7 @@ pub fn attrs(item: &Item) -> Option<&Vec<Attribute>> {
     }
 }
 
-// return true if there is a doc comment of the type [doc = "extern_fn_skip"]`
+// return true if there is a doc comment of the type [doc = "extern_fn:skip"]`
 pub fn meta_is_extern_fn_skip(meta: syn::Result<Meta>) -> bool {
     if let Ok(Meta::NameValue(MetaNameValue {
         path,
@@ -165,17 +165,14 @@ pub fn meta_is_extern_fn_skip(meta: syn::Result<Meta>) -> bool {
         ..
     })) = meta
     {
-        path.is_ident("doc") && lit_str.value().trim() == "extern_fn_skip"
+        path.is_ident("doc") && lit_str.value().trim() == "extern_fn:skip"
     } else {
         false
     }
 }
 
-// return the lower-cased version of the ident of a type, with a trailing `_`
-// the trailing underscore ensure it will not result in a keyword
-// if the type contains generics such as `Foo<T>`, scrap them,
-// so in our example it would be converted to `foo_`
-fn get_ident(ty: &Type) -> Option<Ident> {
+// return the Ident of a type if available
+pub fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
         let mut segs_without_generics = vec![];
         for p in path_ty.path.segments.iter() {
@@ -184,7 +181,48 @@ fn get_ident(ty: &Type) -> Option<Ident> {
                 break;
             }
         }
-        Some(format_ident!("{}_", segs_without_generics.join("_")))
+        Some(syn::parse_str(&segs_without_generics.join("::")).unwrap())
+    } else {
+        None
+    }
+}
+
+// return the lower-cased version of the ident of a type, with a trailing `_`
+// the trailing underscore ensure it will not result in a keyword
+// if the type contains generics such as `Foo<T>`, scrap them,
+// so in our example it would be converted to `foo_`
+pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {
+    get_ident(ty).map(|ident| {
+        let ident_str = ident.to_string().replace("::", "_");
+        format_ident!("{}_", ident_str)
+    })
+}
+
+/// Convert `&self`, `self`, `&mut self` to
+/// `self<SUFFIX>: &<TYPE>`, `self<SUFFIX>: <TYPE>`, `self<SUFFIX>: &mut <TYPE>`
+pub fn normalise_receiver_arg(
+    arg: &FnArg,
+    ty: &Option<Type>,
+    suffix: Option<&str>,
+) -> Option<FnArg> {
+    if let FnArg::Receiver(rec) = arg {
+        let name = ty.as_ref().expect("Method not in an struct/enum impl");
+        let normalised_self_ident = format_ident!("self{}", suffix.unwrap_or_default());
+        Some(
+            syn::parse2(match (rec.reference.clone(), rec.mutability) {
+                (None, None) => quote!(#normalised_self_ident: #name),
+                (None, Some(_)) => quote!(#normalised_self_ident: mut #name),
+                (Some((_, lifetime_opt)), None) => {
+                    let lifetime = lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
+                    quote!(#normalised_self_ident: &#lifetime #name)
+                }
+                (Some((_, lifetime_opt)), Some(_)) => {
+                    let lifetime = lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
+                    quote!(#normalised_self_ident: &#lifetime mut #name)
+                }
+            })
+            .unwrap(),
+        )
     } else {
         None
     }
@@ -205,7 +243,7 @@ impl ExternaliseFn {
             extern_fn.sig.ident = format_ident!(
                 "ffi_{}{}",
                 ty.as_ref()
-                    .and_then(|ty| Some(get_ident(ty)?.to_string()))
+                    .and_then(|ty| Some(get_ident_as_function(ty)?.to_string()))
                     .unwrap_or_default(),
                 extern_fn.sig.ident
             );
@@ -215,25 +253,10 @@ impl ExternaliseFn {
                     union(g1, extern_fn.sig.generics)
                 });
             for arg in extern_fn.sig.inputs.iter_mut() {
-                if let FnArg::Receiver(rec) = arg {
-                    let name = ty.as_ref().expect("Method not in an struct/enum impl");
-                    let fn_arg: FnArg =
-                        syn::parse2(match (rec.reference.clone(), rec.mutability) {
-                            (None, None) => quote!(self_: #name),
-                            (None, Some(_)) => quote!(self_: mut #name),
-                            (Some((_, lifetime_opt)), None) => {
-                                let lifetime =
-                                    lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
-                                quote!(self_: &#lifetime #name)
-                            }
-                            (Some((_, lifetime_opt)), Some(_)) => {
-                                let lifetime =
-                                    lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
-                                quote!(self_: &#lifetime mut #name)
-                            }
-                        })
-                        .unwrap();
-                    *arg = fn_arg;
+                if let Some(normalised_arg) =
+                    normalise_receiver_arg(arg, &self.current_impl_ty, Some("_"))
+                {
+                    *arg = normalised_arg;
                 }
             }
             // the body of the function should just be calling the original function
@@ -366,7 +389,10 @@ mod tests {
     fn test_ident() {
         let ty: Type = syn::parse_str("Gen<T>").unwrap();
         println!("{ty:?}");
-        assert_eq!(Some(Ident::new("gen_", Span::call_site())), get_ident(&ty))
+        assert_eq!(
+            Some(Ident::new("gen_", Span::call_site())),
+            get_ident_as_function(&ty)
+        )
     }
 
     #[test]
@@ -375,7 +401,7 @@ mod tests {
         println!("{ty:?}");
         assert_eq!(
             Some(Ident::new("foo_gen_", Span::call_site())),
-            get_ident(&ty)
+            get_ident_as_function(&ty)
         )
     }
 }

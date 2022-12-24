@@ -1,23 +1,15 @@
 use std::collections::HashSet;
 
-
-
-
 use log::trace;
 use proc_macro2::TokenStream;
 
-
 use syn::visit::{self, Visit};
-use syn::{
-    ItemEnum, ItemStruct, Visibility,
-};
-use syn::{
-    Fields, Ident, Item,
-};
+use syn::{Fields, FnArg, Generics, Ident, ImplItemMethod, Item, ItemFn, ItemImpl};
+use syn::{ItemEnum, ItemStruct, Visibility};
 
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 
-use crate::cbindgen::{attrs, meta_is_extern_fn_skip};
+use crate::cbindgen::{attrs, get_ident, meta_is_extern_fn_skip};
 
 struct Cxx;
 
@@ -33,6 +25,16 @@ impl Default for CreateRawStruct {
             raw_structs: vec![],
             idents: HashSet::new(),
         }
+    }
+}
+
+impl CreateRawStruct {
+    fn results(self) -> (Vec<ItemStruct>, HashSet<Ident>) {
+        let Self {
+            raw_structs,
+            idents,
+        } = self;
+        (raw_structs, idents)
     }
 }
 
@@ -77,12 +79,117 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
     }
 }
 
+// for each file, add at the end of it its externalised fn
+// regular `pub fn foo(arg1: X, arg2: &Y) -> bool`
+// are converted to `#[no_mangle] pub extern "C" fn ffi_foo(arg1: X, arg2: &Y) -> bool`
+// method `pub fn foo_method(&self,arg1: X, arg2: &Y) -> bool`
+// are converted to `#[no_mangle] pub extern "C" fn ffi_foo_method(self_: &Foo,arg1: X, arg2: &Y) -> bool`
+#[derive(Debug, Clone, Default)]
+struct GatherSignatures {
+    // only set if not a trait method
+    current_impl_ty: Option<syn::Type>,
+    allowed_idents: HashSet<Ident>,
+    externalised_fn_buf: Vec<syn::ItemFn>,
+}
+
+impl GatherSignatures {
+    fn handle_item_fn(
+        &mut self,
+        item_fn: &ItemFn,
+        prefix: Option<String>, // only set when handling associated functions
+    ) {
+        if item_fn.sig.asyncness.is_none()
+            && item_fn.sig.abi.is_none()
+            && matches!(item_fn.vis, Visibility::Public(_))
+            // do not handle function with `cfg` attributes for the moment
+            && item_fn.attrs.iter().all(|a| !a.path.is_ident("cfg") && !meta_is_extern_fn_skip(a.parse_meta()))
+        {
+            let mut extern_fn = item_fn.clone();
+            trace!("handling fn {:?}", extern_fn.sig.ident);
+            extern_fn.sig.ident =
+                format_ident!("{}{}", prefix.unwrap_or_default(), extern_fn.sig.ident);
+            for arg in extern_fn.sig.inputs.iter_mut() {
+                if let FnArg::Receiver(rec) = arg {
+                    let name = self
+                        .current_impl_ty
+                        .as_ref()
+                        .expect("Method not in an struct/enum impl");
+                    let fn_arg: FnArg =
+                        syn::parse2(match (rec.reference.clone(), rec.mutability) {
+                            (None, None) => quote!(self: #name),
+                            (None, Some(_)) => quote!(self: mut #name),
+                            (Some((_, lifetime_opt)), None) => {
+                                let lifetime =
+                                    lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
+                                quote!(self: &#lifetime #name)
+                            }
+                            (Some((_, lifetime_opt)), Some(_)) => {
+                                let lifetime =
+                                    lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
+                                quote!(self_: &#lifetime mut #name)
+                            }
+                        })
+                        .unwrap();
+                    *arg = fn_arg;
+                }
+            }
+
+            self.externalised_fn_buf.push(extern_fn);
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for GatherSignatures {
+    fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
+        if item_impl.trait_.is_none()
+            && get_ident(&item_impl.self_ty)
+                .map_or(false, |ident| self.allowed_idents.contains(&ident))
+        {
+            self.current_impl_ty = Some(*item_impl.self_ty.clone());
+            trace!("Looking at impl of {:?}", get_ident(&*item_impl.self_ty))
+        } else {
+            self.current_impl_ty = None;
+        }
+        visit::visit_item_impl(self, item_impl);
+        self.current_impl_ty = None;
+    }
+
+    fn visit_item(&mut self, i: &'ast Item) {
+        if attrs(i).map_or(true, |attrs| {
+            attrs
+                .iter()
+                .all(|a| !meta_is_extern_fn_skip(a.parse_meta()))
+        }) {
+            visit::visit_item(self, i)
+        }
+    }
+
+    fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
+        self.handle_item_fn(
+            item_fn,
+            self.current_impl_ty
+                .clone()
+                .and_then(|ty| Some(get_ident(&ty)?.to_string())),
+        );
+        visit::visit_item_fn(self, item_fn);
+    }
+
+    fn visit_impl_item_method(&mut self, item_method: &'ast ImplItemMethod) {
+        let item_fn: ItemFn =
+            syn::parse2(item_method.to_token_stream()).expect("from method to bare fn failed");
+        self.handle_item_fn(&item_fn, None);
+        visit::visit_impl_item_method(self, item_method);
+    }
+}
+
 impl Cxx {
     pub fn handle_file(parsed_file: &mut syn::File) -> TokenStream {
         trace!("Starting CreateRawStruct pass");
         let mut create_raw_struct = CreateRawStruct::default();
         create_raw_struct.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
+        let (raw_structs, idents) = create_raw_struct.results();
+
         let parsed_file_tokens = quote!(#parsed_file);
         parsed_file_tokens
     }
