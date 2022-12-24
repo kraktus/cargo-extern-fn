@@ -1,5 +1,3 @@
-#[allow(unused_variables, dead_code)]
-
 // this is a comment
 pub struct Person {
     age: usize,

@@ -176,7 +176,7 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
         let mut segs_without_generics = vec![];
         for p in path_ty.path.segments.iter() {
-            segs_without_generics.push(p.ident.clone().to_string().to_ascii_lowercase());
+            segs_without_generics.push(p.ident.clone().to_string());
             if !p.arguments.is_none() {
                 break;
             }
@@ -193,7 +193,7 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
 // so in our example it would be converted to `foo_`
 pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {
     get_ident(ty).map(|ident| {
-        let ident_str = ident.to_string().replace("::", "_");
+        let ident_str = ident.to_string().replace("::", "_").to_ascii_lowercase();
         format_ident!("{}_", ident_str)
     })
 }

@@ -18,13 +18,13 @@ use crate::cbindgen::{attrs, get_ident, meta_is_extern_fn_skip, normalise_receiv
 #[derive(Default, Debug)]
 pub struct Cxx {
     all_cxx_fn: Vec<syn::ItemFn>,
-    all_cxx_struct_or_enum: Vec<StructOrEnum> // TODO maybe switch to derive
+    all_cxx_struct_or_enum: Vec<StructOrEnum>, // TODO maybe switch to derive
 }
 
 #[derive(Debug)]
 enum StructOrEnum {
-	S(ItemStruct),
-	E(ItemEnum)
+    S(ItemStruct),
+    E(ItemEnum),
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +57,7 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
         if matches!(struct_.vis, Visibility::Public(_)) && struct_.generics.params.is_empty()
         // generics not handled by cxx
         {
+            trace!("Creating raw struct of {}", struct_.ident);
             let mut raw_struct = struct_.clone();
             raw_struct.ident = format_ident!("{}Raw", struct_.ident);
             for field_mut in raw_struct.fields.iter_mut() {
@@ -146,8 +147,9 @@ impl GatherSignatures {
 impl<'ast> Visit<'ast> for GatherSignatures {
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         if item_impl.trait_.is_none()
-            && get_ident(&item_impl.self_ty)
-                .map_or(false, |ident| self.allowed_idents.contains(&ident))
+            && get_ident(&item_impl.self_ty).map_or(false, |ident| {
+                dbg!(dbg!(&self.allowed_idents).contains(dbg!(&ident)))
+            })
         {
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
             trace!("Looking at impl of {:?}", get_ident(&*item_impl.self_ty))
@@ -186,6 +188,23 @@ impl<'ast> Visit<'ast> for GatherSignatures {
     }
 }
 
+fn impl_from_x_to_y(x: Ident, y: Ident, fields: Fields) {
+    let body = match fields {
+        Fields::Named(nameds) => {
+            let named_token = nameds.named.iter().map(|f| {
+                let ident = f.ident.as_ref().expect("named field");
+                quote!(#ident: x.#ident)
+            });
+            quote!({#(#named_token),*})
+        }
+        Fields::Unnamed(unnameds) => {
+            let unnamed_token = (0..unnameds.unnamed.len()).map(|i| quote!(x.#i));
+            quote!((#(#unnamed_token),*))
+        }
+        Fields::Unit => unimplemented!("TBD"),
+    };
+}
+
 impl Cxx {
     pub fn handle_file(&mut self, parsed_file: &mut syn::File) -> TokenStream {
         trace!("Starting CreateRawStruct pass");
@@ -193,24 +212,25 @@ impl Cxx {
         create_raw_struct.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
         let (raw_structs, idents) = create_raw_struct.results();
-        trace!("Starting GatherSignatures pass");
-        let mut gather_sig = GatherSignatures::new(idents);
-        gather_sig.visit_file(parsed_file);
-        trace!("Finished GatherSignatures pass");
-        self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
+        // trace!("Starting GatherSignatures pass");
+        // let mut gather_sig = GatherSignatures::new(idents);
+        // gather_sig.visit_file(parsed_file);
+        // trace!("Finished GatherSignatures pass");
+        // self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
 
         let mut parsed_file_tokens = quote!(#parsed_file);
         for raw_struct in raw_structs {
-        	raw_struct.to_tokens(&mut parsed_file_tokens);
+            raw_struct.to_tokens(&mut parsed_file_tokens);
         }
         parsed_file_tokens
     }
 
     pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
-        let mut lib = File::open(code_dir.join("lib.rs")).expect("reading file in src/ failed");
-        let mut src_lib = String::new();
-        lib.read_to_string(&mut src_lib)
-            .expect("Unable to read file");
-        let mut parsed_file = syn::parse_file(&src_lib).expect("Unable to parse file");
+        todo!()
+        // let mut lib = File::open(code_dir.join("lib.rs")).expect("reading lib.rs in src_dir failed");
+        // let mut src_lib = String::new();
+        // lib.read_to_string(&mut src_lib)
+        //     .expect("Unable to read file");
+        // let mut parsed_file = syn::parse_file(&src_lib).expect("Unable to parse file");
     }
 }
