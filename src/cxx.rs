@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use std::fs::{File, OpenOptions};
+use std::io::Read;
 use std::path::Path;
 
 use log::trace;
@@ -11,7 +13,9 @@ use syn::{ItemEnum, ItemStruct, Visibility};
 
 use quote::{format_ident, quote, ToTokens};
 
-use crate::cbindgen::{attrs, get_ident, meta_is_extern_fn_skip, normalise_receiver_arg};
+use crate::cbindgen::{
+    attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, normalise_receiver_arg,
+};
 
 #[derive(Default, Debug)]
 pub struct Cxx {
@@ -57,7 +61,6 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
         {
             trace!("Creating raw struct of {}", struct_.ident);
             let mut raw_struct = struct_.clone();
-            raw_struct.ident = format_ident!("{}Raw", struct_.ident);
             for field_mut in raw_struct.fields.iter_mut() {
                 field_mut.vis = struct_.vis.clone() // make it public, not sure if reusing the span will cause issue
             }
@@ -117,7 +120,7 @@ impl GatherSignatures {
     fn handle_item_fn(
         &mut self,
         item_fn: &ItemFn,
-        prefix: Option<String>, // only set when handling associated functions
+        prefix_opt: Option<Ident>, // only set when handling associated functions
     ) {
         if item_fn.sig.asyncness.is_none()
             && item_fn.sig.abi.is_none()
@@ -127,8 +130,9 @@ impl GatherSignatures {
         {
             let mut extern_fn = item_fn.clone();
             trace!("handling fn {:?}", extern_fn.sig.ident);
-            extern_fn.sig.ident =
-                format_ident!("{}{}", prefix.unwrap_or_default(), extern_fn.sig.ident);
+            if let Some(prefix) = prefix_opt {
+                extern_fn.sig.ident = format_ident!("{}{}", prefix, extern_fn.sig.ident);
+            }
             for arg in extern_fn.sig.inputs.iter_mut() {
                 if let Some(normalised_arg) =
                     normalise_receiver_arg(arg, &self.current_impl_ty, None)
@@ -173,7 +177,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
             item_fn,
             self.current_impl_ty
                 .clone()
-                .and_then(|ty| Some(get_ident(&ty)?.to_string().to_lowercase() + "_")),
+                .and_then(|ty| get_ident_as_function(&ty)),
         );
         visit::visit_item_fn(self, item_fn);
     }
@@ -211,12 +215,20 @@ fn impl_from_x_to_y(x: &Ident, y: &Ident, fields: &Fields) -> TokenStream {
 }
 
 impl Cxx {
+    fn generate_cxx_types(&self) -> TokenStream {
+        todo!()
+    }
+
+    fn generate_cxx_signatures(&self) -> TokenStream {
+        todo!()
+    }
+
     pub fn handle_file(&mut self, parsed_file: &mut syn::File) -> TokenStream {
         trace!("Starting CreateRawStruct pass");
         let mut create_raw_struct = CreateRawStruct::default();
         create_raw_struct.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
-        let (raw_structs, _idents) = create_raw_struct.results();
+        let (all_pub_structs, _idents) = create_raw_struct.results();
         // trace!("Starting GatherSignatures pass");
         // let mut gather_sig = GatherSignatures::new(idents);
         // gather_sig.visit_file(parsed_file);
@@ -224,26 +236,34 @@ impl Cxx {
         // self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
 
         let mut parsed_file_tokens = quote!(#parsed_file);
-        for raw_struct in raw_structs {
+        for pub_struct in all_pub_structs {
+            let mut raw_struct = pub_struct.clone();
+            let ident_raw: Ident = format_ident!("{}Raw", pub_struct.ident);
+            raw_struct.ident = ident_raw.clone();
             raw_struct.to_tokens(&mut parsed_file_tokens);
-            let ident = raw_struct.ident.to_string();
-            let ident_without_raw: Ident = syn::parse_str(&ident[0..ident.len() - 3]).unwrap();
-            trace!("Generating conversion impl of {ident}");
-            impl_from_x_to_y(&ident_without_raw, &raw_struct.ident, &raw_struct.fields)
+            trace!("Generating conversion impl of {ident_raw}");
+            impl_from_x_to_y(&pub_struct.ident, &ident_raw, &raw_struct.fields)
                 .to_tokens(&mut parsed_file_tokens);
-            impl_from_x_to_y(&raw_struct.ident, &ident_without_raw, &raw_struct.fields)
+            impl_from_x_to_y(&ident_raw, &pub_struct.ident, &raw_struct.fields)
                 .to_tokens(&mut parsed_file_tokens);
-            trace!("Finished conversion impl of {ident}");
+            trace!("Finished conversion impl of {ident_raw}");
         }
         parsed_file_tokens
     }
 
-    pub fn generate_ffi_bridge_and_impl(self, _code_dir: &Path) {
-        todo!()
-        // let mut lib = File::open(code_dir.join("lib.rs")).expect("reading lib.rs in src_dir failed");
-        // let mut src_lib = String::new();
-        // lib.read_to_string(&mut src_lib)
-        //     .expect("Unable to read file");
-        // let mut parsed_file = syn::parse_file(&src_lib).expect("Unable to parse file");
+    pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
+        let mut file = File::open(code_dir.join("lib.rs"))
+            .or_else(|_| {
+                OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .read(true)
+                    .open(code_dir.join("main.rs"))
+            })
+            .expect("reading lib.rs and main.rs in src_dir failed");
+        let mut src_file = String::new();
+        file.read_to_string(&mut src_file)
+            .expect("Unable to read file");
+        let mut parsed_file = syn::parse_file(&src_file).expect("Unable to parse file");
     }
 }
