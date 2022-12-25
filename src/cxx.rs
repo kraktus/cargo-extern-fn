@@ -23,7 +23,7 @@ pub struct Cxx {
     all_cxx_struct_or_enum: Vec<StructOrEnum>, // TODO maybe switch to derive
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum StructOrEnum {
     S(ItemStruct),
     E(ItemEnum),
@@ -31,26 +31,26 @@ enum StructOrEnum {
 
 #[derive(Debug, Clone)]
 struct CreateRawStruct {
-    raw_structs: Vec<ItemStruct>, // public enums always have their variants public, so no need to construct a sibling
-    idents: HashSet<Ident>,       // idents of struct/enums. TODO union?
+    pub_struct_or_enum: Vec<StructOrEnum>,
+    idents: HashSet<Ident>, // idents of struct/enums. TODO union?
 }
 
 impl Default for CreateRawStruct {
     fn default() -> Self {
         Self {
-            raw_structs: vec![],
+            pub_struct_or_enum: vec![],
             idents: HashSet::new(),
         }
     }
 }
 
 impl CreateRawStruct {
-    fn results(self) -> (Vec<ItemStruct>, HashSet<Ident>) {
+    fn results(self) -> (Vec<StructOrEnum>, HashSet<Ident>) {
         let Self {
-            raw_structs,
+            pub_struct_or_enum,
             idents,
         } = self;
-        (raw_structs, idents)
+        (pub_struct_or_enum, idents)
     }
 }
 
@@ -59,12 +59,12 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
         if matches!(struct_.vis, Visibility::Public(_)) && struct_.generics.params.is_empty()
         // generics not handled by cxx
         {
-            trace!("Creating raw struct of {}", struct_.ident);
+            trace!("Creating pub struct of {}", struct_.ident);
             let mut raw_struct = struct_.clone();
             for field_mut in raw_struct.fields.iter_mut() {
                 field_mut.vis = struct_.vis.clone() // make it public, not sure if reusing the span will cause issue
             }
-            self.raw_structs.push(raw_struct);
+            self.pub_struct_or_enum.push(StructOrEnum::S(raw_struct));
             self.idents.insert(struct_.ident.clone());
         }
         visit::visit_item_struct(self, struct_);
@@ -80,6 +80,7 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
         // generics not handled by cxx
         {
             self.idents.insert(enum_.ident.clone());
+            self.pub_struct_or_enum.push(StructOrEnum::E(enum_.clone()))
         }
         visit::visit_item_enum(self, enum_);
     }
@@ -150,7 +151,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         if item_impl.trait_.is_none()
             && get_ident(&item_impl.self_ty).map_or(false, |ident| {
-                dbg!(dbg!(&self.allowed_idents).contains(dbg!(&ident)))
+                self.allowed_idents.contains(&ident)
             })
         {
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
@@ -223,47 +224,51 @@ impl Cxx {
         todo!()
     }
 
-    pub fn handle_file(&mut self, parsed_file: &mut syn::File) -> TokenStream {
+    pub fn handle_file(&mut self, parsed_file: &syn::File) -> TokenStream {
         trace!("Starting CreateRawStruct pass");
         let mut create_raw_struct = CreateRawStruct::default();
         create_raw_struct.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
-        let (all_pub_structs, _idents) = create_raw_struct.results();
-        // trace!("Starting GatherSignatures pass");
-        // let mut gather_sig = GatherSignatures::new(idents);
-        // gather_sig.visit_file(parsed_file);
-        // trace!("Finished GatherSignatures pass");
-        // self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
+        let (pub_struct_or_enum, idents) = create_raw_struct.results();
+        trace!("Starting GatherSignatures pass");
+        let mut gather_sig = GatherSignatures::new(idents);
+        gather_sig.visit_file(parsed_file);
+        trace!("Finished GatherSignatures pass");
+        self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
 
         let mut parsed_file_tokens = quote!(#parsed_file);
-        for pub_struct in all_pub_structs {
-            let mut raw_struct = pub_struct.clone();
-            let ident_raw: Ident = format_ident!("{}Raw", pub_struct.ident);
-            raw_struct.ident = ident_raw.clone();
-            raw_struct.to_tokens(&mut parsed_file_tokens);
-            trace!("Generating conversion impl of {ident_raw}");
-            impl_from_x_to_y(&pub_struct.ident, &ident_raw, &raw_struct.fields)
-                .to_tokens(&mut parsed_file_tokens);
-            impl_from_x_to_y(&ident_raw, &pub_struct.ident, &raw_struct.fields)
-                .to_tokens(&mut parsed_file_tokens);
-            trace!("Finished conversion impl of {ident_raw}");
+        for struct_or_enum in pub_struct_or_enum.iter() {
+            if let StructOrEnum::S(pub_struct) = struct_or_enum {
+                let mut raw_struct = pub_struct.clone();
+                let ident_raw: Ident = format_ident!("{}Raw", pub_struct.ident);
+                raw_struct.ident = ident_raw.clone();
+                raw_struct.to_tokens(&mut parsed_file_tokens);
+                trace!("Generating conversion impl of {ident_raw}");
+                impl_from_x_to_y(&pub_struct.ident, &ident_raw, &raw_struct.fields)
+                    .to_tokens(&mut parsed_file_tokens);
+                impl_from_x_to_y(&ident_raw, &pub_struct.ident, &raw_struct.fields)
+                    .to_tokens(&mut parsed_file_tokens);
+                trace!("Finished conversion impl of {ident_raw}");
+            }
         }
+        self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
         parsed_file_tokens
     }
 
     pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
-        let mut file = File::open(code_dir.join("lib.rs"))
-            .or_else(|_| {
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .read(true)
-                    .open(code_dir.join("main.rs"))
-            })
-            .expect("reading lib.rs and main.rs in src_dir failed");
-        let mut src_file = String::new();
-        file.read_to_string(&mut src_file)
-            .expect("Unable to read file");
-        let mut parsed_file = syn::parse_file(&src_file).expect("Unable to parse file");
+    	todo!()
+        // let mut file = File::open(code_dir.join("lib.rs"))
+        //     .or_else(|_| {
+        //         OpenOptions::new()
+        //             .create(true)
+        //             .write(true)
+        //             .read(true)
+        //             .open(code_dir.join("main.rs"))
+        //     })
+        //     .expect("reading lib.rs and main.rs in src_dir failed");
+        // let mut src_file = String::new();
+        // file.read_to_string(&mut src_file)
+        //     .expect("Unable to read file");
+        // let mut parsed_file = syn::parse_file(&src_file).expect("Unable to parse file");
     }
 }

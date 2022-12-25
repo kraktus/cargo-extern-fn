@@ -184,7 +184,6 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
             }
         }
         let seg_string = segs_without_generics.join("_");
-        println!("{}", &seg_string);
         Some(syn::parse_str(&seg_string).unwrap())
     } else {
         None
