@@ -1,14 +1,12 @@
 use std::collections::HashSet;
-use std::fs::File;
-use std::io::Read;
+
 use std::path::Path;
 
-use clap::Args;
 use log::trace;
 use proc_macro2::TokenStream;
 
 use syn::visit::{self, Visit};
-use syn::{Fields, FnArg, Generics, Ident, ImplItemMethod, Item, ItemFn, ItemImpl};
+use syn::{Fields, Ident, ImplItemMethod, Item, ItemFn, ItemImpl};
 use syn::{ItemEnum, ItemStruct, Visibility};
 
 use quote::{format_ident, quote, ToTokens};
@@ -198,7 +196,9 @@ fn impl_from_x_to_y(x: &Ident, y: &Ident, fields: &Fields) -> TokenStream {
             quote!({#(#named_token),*})
         }
         Fields::Unnamed(unnameds) => {
-            let unnamed_token = (0..unnameds.unnamed.len()).map(syn::Index::from).map(|i| quote!(x.#i));
+            let unnamed_token = (0..unnameds.unnamed.len())
+                .map(syn::Index::from)
+                .map(|i| quote!(x.#i));
             quote!((#(#unnamed_token),*))
         }
         Fields::Unit => unimplemented!("TBD"),
@@ -216,7 +216,7 @@ impl Cxx {
         let mut create_raw_struct = CreateRawStruct::default();
         create_raw_struct.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
-        let (raw_structs, idents) = create_raw_struct.results();
+        let (raw_structs, _idents) = create_raw_struct.results();
         // trace!("Starting GatherSignatures pass");
         // let mut gather_sig = GatherSignatures::new(idents);
         // gather_sig.visit_file(parsed_file);
@@ -238,7 +238,7 @@ impl Cxx {
         parsed_file_tokens
     }
 
-    pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
+    pub fn generate_ffi_bridge_and_impl(self, _code_dir: &Path) {
         todo!()
         // let mut lib = File::open(code_dir.join("lib.rs")).expect("reading lib.rs in src_dir failed");
         // let mut src_lib = String::new();

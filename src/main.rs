@@ -75,7 +75,7 @@ impl Cli {
     }
 }
 fn main() {
-    let mut args = Cli::parse();
+    let args = Cli::parse();
     let mut builder = Builder::new();
     builder
         .filter(
