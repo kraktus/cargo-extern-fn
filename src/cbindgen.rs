@@ -171,7 +171,9 @@ pub fn meta_is_extern_fn_skip(meta: syn::Result<Meta>) -> bool {
     }
 }
 
-// return the Ident of a type if available
+// return the ident of the type if available
+// if the type contains generics such as `Foo<T>`, scrap them,
+// so in our example it would be converted to `foo_`
 pub fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
         let mut segs_without_generics = vec![];
@@ -181,7 +183,9 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
                 break;
             }
         }
-        Some(syn::parse_str(&segs_without_generics.join("::")).unwrap())
+        let seg_string = segs_without_generics.join("_");
+        println!("{}", &seg_string);
+        Some(syn::parse_str(&seg_string).unwrap())
     } else {
         None
     }
@@ -189,11 +193,9 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
 
 // return the lower-cased version of the ident of a type, with a trailing `_`
 // the trailing underscore ensure it will not result in a keyword
-// if the type contains generics such as `Foo<T>`, scrap them,
-// so in our example it would be converted to `foo_`
 pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {
     get_ident(ty).map(|ident| {
-        let ident_str = ident.to_string().replace("::", "_").to_ascii_lowercase();
+        let ident_str = ident.to_string().to_ascii_lowercase();
         format_ident!("{}_", ident_str)
     })
 }
@@ -388,7 +390,6 @@ mod tests {
     #[test]
     fn test_ident() {
         let ty: Type = syn::parse_str("Gen<T>").unwrap();
-        println!("{ty:?}");
         assert_eq!(
             Some(Ident::new("gen_", Span::call_site())),
             get_ident_as_function(&ty)
@@ -398,7 +399,6 @@ mod tests {
     #[test]
     fn test_ident2() {
         let ty: Type = syn::parse_str("foo::Gen<T>").unwrap();
-        println!("{ty:?}");
         assert_eq!(
             Some(Ident::new("foo_gen_", Span::call_site())),
             get_ident_as_function(&ty)
