@@ -1,14 +1,12 @@
 use std::collections::HashSet;
 
-use std::fs::{File, OpenOptions};
-use std::io::Read;
 use std::path::Path;
 
 use log::trace;
 use proc_macro2::TokenStream;
 
 use syn::visit::{self, Visit};
-use syn::{Fields, Ident, ImplItemMethod, Item, ItemFn, ItemImpl, ReturnType, Signature, Type};
+use syn::{Fields, Ident, ImplItemMethod, Item, ItemFn, ItemImpl, ReturnType, Type};
 use syn::{ItemEnum, ItemStruct, Visibility};
 
 use quote::{format_ident, quote, ToTokens};
@@ -324,7 +322,7 @@ impl Cxx {
         parsed_file_tokens
     }
 
-    pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
+    pub fn generate_ffi_bridge_and_impl(self, _code_dir: &Path) {
         todo!()
         // let mut file = File::open(code_dir.join("lib.rs"))
         //     .or_else(|_| {
