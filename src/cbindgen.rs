@@ -124,6 +124,7 @@ impl ExternaliseFn {
             extern_fn.block = syn::parse2(call_function_from_sig(
                 self.current_impl_ty.as_ref(),
                 &item_fn.sig,
+                "_"
             ))
             .unwrap();
 
