@@ -8,14 +8,15 @@ use log::trace;
 use proc_macro2::TokenStream;
 
 use syn::visit::{self, Visit};
-use syn::{Fields, Ident, ImplItemMethod, Item, ItemFn, ItemImpl};
+use syn::{Fields, Ident, ImplItemMethod, Item, ItemFn, ItemImpl, ReturnType, Signature, Type};
 use syn::{ItemEnum, ItemStruct, Visibility};
 
 use quote::{format_ident, quote, ToTokens};
 
-use crate::cbindgen::{
+use crate::utils::{
     attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, normalise_receiver_arg,
 };
+use crate::utils::is_type;
 
 #[derive(Default, Debug)]
 pub struct Cxx {
@@ -27,6 +28,31 @@ pub struct Cxx {
 enum StructOrEnum {
     S(ItemStruct),
     E(ItemEnum),
+}
+
+impl ToTokens for StructOrEnum {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match &self {
+            StructOrEnum::S(x) => x.to_tokens(tokens),
+            StructOrEnum::E(x) => x.to_tokens(tokens),
+        }
+    }
+}
+
+impl StructOrEnum {
+    fn ident(&self) -> &Ident {
+        match &self {
+            StructOrEnum::S(x) => &x.ident,
+            StructOrEnum::E(x) => &x.ident,
+        }
+    }
+
+    fn ident_mut(&mut self) -> &mut Ident {
+        match self {
+            StructOrEnum::S(x) => &mut x.ident,
+            StructOrEnum::E(x) => &mut x.ident,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +135,41 @@ struct GatherSignatures {
     cxx_fn_buf: Vec<ItemFn>,
 }
 
+struct CxxFn {
+    pub item_fn: ItemFn,
+    pub return_is_opt: bool, // cxx does not handle `Option`... convert to `Result`
+}
+
+impl CxxFn {
+    fn new(item_fn: ItemFn) -> Self {
+        let return_is_opt = if let ReturnType::Type(_, ty) = item_fn.sig.output.clone() {
+            is_type("Option", &*ty)
+        } else {
+            false
+        };
+        Self {
+            item_fn,
+            return_is_opt,
+        }
+    }
+
+    fn as_cxx_sig(&self) -> TokenStream {
+        let mut cxx_sig = self.item_fn.sig.clone();
+        if self.return_is_opt {
+            if let ReturnType::Type(_, ref mut ty) = cxx_sig.output {
+                if let Type::Path(ref mut p) = **ty {
+                    p.path.segments[0].ident = syn::parse_str("Result").unwrap();
+                }
+            }
+        }
+        quote!(#cxx_sig;)
+    }
+
+    fn as_cxx_impl(&self) -> TokenStream {
+        todo!()
+    }
+}
+
 impl GatherSignatures {
     fn new(allowed_idents: HashSet<Ident>) -> Self {
         Self {
@@ -150,9 +211,8 @@ impl GatherSignatures {
 impl<'ast> Visit<'ast> for GatherSignatures {
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         if item_impl.trait_.is_none()
-            && get_ident(&item_impl.self_ty).map_or(false, |ident| {
-                self.allowed_idents.contains(&ident)
-            })
+            && get_ident(&item_impl.self_ty)
+                .map_or(false, |ident| self.allowed_idents.contains(&ident))
         {
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
             trace!("Looking at impl of {:?}", get_ident(&*item_impl.self_ty))
@@ -217,7 +277,16 @@ fn impl_from_x_to_y(x: &Ident, y: &Ident, fields: &Fields) -> TokenStream {
 
 impl Cxx {
     fn generate_cxx_types(&self) -> TokenStream {
-        todo!()
+        trace!("Generating FFI struct declarations");
+        let mut buf = TokenStream::new();
+        for struct_or_enum in self.all_cxx_struct_or_enum.iter() {
+            let mut ffi_struct = struct_or_enum.clone();
+            let ident_ffi: Ident = format_ident!("{}Ffi", struct_or_enum.ident());
+            *ffi_struct.ident_mut() = ident_ffi.clone();
+            ffi_struct.to_tokens(&mut buf);
+        }
+        trace!("Finished generating FFI struct declarations");
+        buf
     }
 
     fn generate_cxx_signatures(&self) -> TokenStream {
@@ -256,7 +325,7 @@ impl Cxx {
     }
 
     pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
-    	todo!()
+        todo!()
         // let mut file = File::open(code_dir.join("lib.rs"))
         //     .or_else(|_| {
         //         OpenOptions::new()

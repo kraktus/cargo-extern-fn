@@ -14,6 +14,7 @@ use syn::parse_quote;
 
 mod cbindgen;
 mod cxx;
+mod utils;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
