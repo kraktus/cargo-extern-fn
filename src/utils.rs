@@ -229,28 +229,34 @@ pub fn union(g1: Generics, g2: Generics) -> Generics {
 }
 
 #[cfg(test)]
+use std::ops::Deref;
+#[cfg(test)]
+use syn::parse::ParseStream;
+
+#[cfg(test)]
+pub struct TypeTest(pub Type);
+
+#[cfg(test)]
+impl Parse for TypeTest {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self(Type::without_plus(input)?))
+    }
+}
+#[cfg(test)]
+impl Deref for TypeTest {
+    type Target = Type;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use std::ops::Deref;
 
     use proc_macro2::Span;
-    use syn::parse::{Parse, ParseStream};
 
     use super::*;
-
-    struct TypeTest(Type);
-
-    impl Parse for TypeTest {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            Ok(Self(Type::without_plus(input)?))
-        }
-    }
-    impl Deref for TypeTest {
-        type Target = Type;
-
-        fn deref(&self) -> &Self::Target {
-            &self.0
-        }
-    }
 
     #[test]
     fn test_call_function_from_sig() {

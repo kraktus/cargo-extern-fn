@@ -121,7 +121,8 @@ impl ExternaliseFn {
                 }
             }
             // the body of the function should just be calling the original function
-            let call_fn = call_function_from_sig(self.current_impl_ty.as_ref(), &item_fn.sig, quote!(self_));
+            let call_fn =
+                call_function_from_sig(self.current_impl_ty.as_ref(), &item_fn.sig, quote!(self_));
             extern_fn.block = parse_quote!({#call_fn});
 
             self.externalised_fn_buf.push(extern_fn);

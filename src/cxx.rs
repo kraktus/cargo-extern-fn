@@ -200,7 +200,9 @@ impl CxxFn {
                 SelfType::Value => {
                     call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(self.into()))
                 }
-                SelfType::ValueMut => call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(x)),
+                SelfType::ValueMut => {
+                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(x))
+                }
                 SelfType::Ref => call_function_from_sig(
                     self.ty.as_ref(),
                     &cxx_item.sig,
@@ -217,8 +219,11 @@ impl CxxFn {
             call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or(()));
         };
 
-        let after_call_fn = if let Some(SelfType::ValueMut) = self_type_opt.as_ref() {
+        let after_call_fn = if let Some(SelfType::RefMut) = self_type_opt.as_ref() {
             quote!(*self = Self::from(x);)
+        } else if let Some(SelfType::ValueMut) = self_type_opt.as_ref() {
+            // Only valueMut that return `Self` are supported for the moment
+            quote!(let res = Self::from(x);)
         } else {
             TokenStream::new()
         };
@@ -399,6 +404,8 @@ impl Cxx {
 #[cfg(test)]
 mod tests {
 
+    use crate::utils::TypeTest;
+
     use super::*;
 
     #[test]
@@ -449,6 +456,99 @@ mod tests {
         assert_eq!(
             format!("{cxx_impl}"),
             "pub fn foo (u : usize) -> usize { let res = foo (u) ; res }"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl_ref_self_method() {
+        let item_fn = syn::parse_str(
+            r#"pub fn is_adult(&self) -> bool {
+        self.age >= 18
+    }"#,
+        )
+        .unwrap();
+        let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
+        let cxx_impl = cxx_fn.as_cxx_impl();
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn is_adult(&self) -> bool {
+    let res = <bar::Bar>::is_adult(<bar::Bar>::from(self.clone()));
+    res
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl_value_self_method() {
+        let item_fn = syn::parse_str(
+            r#"pub fn name(self) -> [char; 5] {
+        self.name
+    }"#,
+        )
+        .unwrap();
+        let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
+        let cxx_impl = cxx_fn.as_cxx_impl();
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn name(self) -> [char; 5] {
+    let res = <bar::Bar>::name(self.into());
+    res
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl_valuemut_self_method() {
+        let item_fn = syn::parse_str(
+            r#"pub fn bday_value(mut self) -> Self {
+        self.age += 1;
+        self
+    }"#,
+        )
+        .unwrap();
+        let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
+        let cxx_impl = cxx_fn.as_cxx_impl();
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn bday_value(mut self) -> Self {
+    let mut x = <bar::Bar>::from(self);
+    let res = <bar::Bar>::bday_value(x);
+    let res = Self::from(x);
+    res
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl_refmut_self_method() {
+        let item_fn = syn::parse_str(
+            r#"pub fn bday(&mut self) {
+        self.age += 1
+    }"#,
+        )
+        .unwrap();
+        let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
+        let cxx_impl = cxx_fn.as_cxx_impl();
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn bday(&mut self) {
+    let mut x = <bar::Bar>::from(self.clone());
+    let res = <bar::Bar>::bday(&mut x);
+    *self = Self::from(x);
+    res
+}
+"
         )
     }
 }
