@@ -155,10 +155,10 @@ pub fn method_self_type(arg: &FnArg) -> Option<SelfType> {
 // `foo(u, bar)`
 //
 // TODO would it be better if trying to build it as a `syn::Call` type?
-pub fn call_function_from_sig<T: ToTokens>(
+pub fn call_function_from_sig(
     ty: Option<&Type>,
     sig: &Signature,
-    self_ident: T,
+    self_expr: TokenStream,
 ) -> TokenStream {
     let fn_ident = format!(
         "{}{}",
@@ -169,9 +169,8 @@ pub fn call_function_from_sig<T: ToTokens>(
     let mut iter_peek = sig.inputs.iter().peekable();
     // we scrap the types of the signature to effectively use their idents as arguments
     while let Some(arg) = iter_peek.next() {
-        let self_ident: Ident = syn::parse2(quote!(#self_ident)).unwrap();
         match arg {
-            FnArg::Receiver(_) => quote!(#self_ident).to_tokens(&mut args_buf),
+            FnArg::Receiver(_) => self_expr.to_tokens(&mut args_buf),
             FnArg::Typed(PatType { pat, .. }) => {
                 if let Pat::Ident(PatIdent { ident, .. }) = (**pat).clone() {
                     quote!(#ident).to_tokens(&mut args_buf)
@@ -258,7 +257,7 @@ mod tests {
         let sig: Signature = syn::parse_str("fn foo(f: Foo, x: u64) -> bool").unwrap();
         assert_eq!(
             "foo (f , x)",
-            format!("{}", call_function_from_sig(None, &sig, "self_"))
+            format!("{}", call_function_from_sig(None, &sig, quote!(self_)))
         )
     }
 
@@ -268,7 +267,7 @@ mod tests {
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
         assert_eq!(
             "< bar :: Bar > :: foo (self_)",
-            format!("{}", call_function_from_sig(Some(&ty), &sig, "self_"))
+            format!("{}", call_function_from_sig(Some(&ty), &sig, quote!(self_)))
         )
     }
 

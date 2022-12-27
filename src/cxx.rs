@@ -172,6 +172,7 @@ impl CxxFn {
         quote!(#cxx_sig;)
     }
 
+    // TokenStream of an ItemFn
     fn as_cxx_impl(&self) -> TokenStream {
         let mut cxx_item = self.item_fn.clone();
         if self.return_is_opt {
@@ -197,20 +198,20 @@ impl CxxFn {
             let ty_ = self.ty.as_ref().expect("No type defined in method");
             match self_type {
                 SelfType::Value => {
-                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, "self.into()")
+                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(self.into()))
                 }
-                SelfType::ValueMut => call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, "x"),
+                SelfType::ValueMut => call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(x)),
                 SelfType::Ref => call_function_from_sig(
                     self.ty.as_ref(),
                     &cxx_item.sig,
                     quote!(<#ty_>::from(self.clone())),
                 ),
                 SelfType::RefMut => {
-                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, "&mut x")
+                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(&mut x))
                 }
             }
         } else {
-            call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, "")
+            call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!())
         };
         if self.return_is_opt {
             call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or(()));
@@ -221,10 +222,11 @@ impl CxxFn {
         } else {
             TokenStream::new()
         };
-        quote!(#before_call_fn
+        cxx_item.block = parse_quote!({#before_call_fn
             let res = #call_fn;
             #after_call_fn
-            res)
+            res});
+        quote!(#cxx_item)
     }
 }
 
@@ -430,6 +432,23 @@ mod tests {
         assert_eq!(
             format!("{cxx_sig}"),
             "fn get_ident_as_function (ty : & Type) -> Result < Ident > ;"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl() {
+        let item_fn = syn::parse_str(
+            r#"pub fn foo(u: usize) -> usize {
+    u+1
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_impl = cxx_fn.as_cxx_impl();
+
+        assert_eq!(
+            format!("{cxx_impl}"),
+            "pub fn foo (u : usize) -> usize { let res = foo (u) ; res }"
         )
     }
 }
