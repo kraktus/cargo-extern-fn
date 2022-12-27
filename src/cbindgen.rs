@@ -20,7 +20,9 @@ use syn::{
 
 use quote::{format_ident, quote, ToTokens};
 
-use crate::utils::{get_ident_as_function, meta_is_extern_fn_skip, normalise_receiver_arg, union, get_ident, attrs};
+use crate::utils::{
+    attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, normalise_receiver_arg, union,
+};
 
 #[derive(Args, Debug)]
 pub struct Cbindgen;

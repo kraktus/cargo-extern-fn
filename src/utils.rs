@@ -2,8 +2,14 @@ use std::collections::HashSet;
 
 use proc_macro2::Ident;
 use quote::format_ident;
-use syn::{FnArg, Type, Lit, MetaNameValue, Meta, Item, Attribute, ItemExternCrate, ItemUse, ItemStatic, ItemConst, ItemFn, ItemMod, ItemForeignMod, ItemType, ItemStruct, ItemEnum, ItemUnion, ItemTrait, ItemTraitAlias, ItemImpl, ItemMacro, ItemMacro2, Generics, GenericParam, punctuated::{Punctuated, Pair}, Token, WherePredicate, WhereClause};
 use quote::quote;
+use syn::{
+    punctuated::{Pair, Punctuated},
+    Attribute, FnArg, GenericParam, Generics, Item, ItemConst, ItemEnum, ItemExternCrate, ItemFn,
+    ItemForeignMod, ItemImpl, ItemMacro, ItemMacro2, ItemMod, ItemStatic, ItemStruct, ItemTrait,
+    ItemTraitAlias, ItemType, ItemUnion, ItemUse, Lit, Meta, MetaNameValue, Token, Type,
+    WhereClause, WherePredicate,
+};
 
 pub fn attrs(item: &Item) -> Option<&Vec<Attribute>> {
     match item {

@@ -13,10 +13,10 @@ use syn::{ItemEnum, ItemStruct, Visibility};
 
 use quote::{format_ident, quote, ToTokens};
 
+use crate::utils::is_type;
 use crate::utils::{
     attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, normalise_receiver_arg,
 };
-use crate::utils::is_type;
 
 #[derive(Default, Debug)]
 pub struct Cxx {
@@ -339,5 +339,45 @@ impl Cxx {
         // file.read_to_string(&mut src_file)
         //     .expect("Unable to read file");
         // let mut parsed_file = syn::parse_file(&src_file).expect("Unable to parse file");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_cxx_sig() {
+        let item_fn = syn::parse_str(
+            r#"pub fn get_ident_as_function(ty: &Type) -> Ident{
+    todo!()
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn);
+        let cxx_sig = cxx_fn.as_cxx_sig();
+
+        assert_eq!(
+            format!("{cxx_sig}"),
+            "fn get_ident_as_function (ty : & Type) -> Ident ;"
+        )
+    }
+
+    #[test]
+    fn test_cxx_sig_opt() {
+        let item_fn = syn::parse_str(
+            r#"pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {
+    todo!()
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn);
+        let cxx_sig = cxx_fn.as_cxx_sig();
+
+        assert_eq!(
+            format!("{cxx_sig}"),
+            "fn get_ident_as_function (ty : & Type) -> Result < Ident > ;"
+        )
     }
 }
