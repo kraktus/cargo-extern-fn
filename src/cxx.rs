@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use std::fs::{OpenOptions, File};
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -151,7 +151,12 @@ impl CxxFn {
     fn as_cxx_sig(&self) -> TokenStream {
         let mut cxx_sig = self.item_fn.sig.clone();
         for arg in cxx_sig.inputs.iter_mut() {
-            if let Some(normalised_arg) = normalise_receiver_arg(arg, &self.ty, None) {
+            let ffi_ident = self
+                .ty
+                .as_ref()
+                .and_then(get_ident)
+                .map(|ty_ident| format_ident!("{ty_ident}Ffi"));
+            if let Some(normalised_arg) = normalise_receiver_arg(arg, ffi_ident, None) {
                 *arg = normalised_arg;
             }
         }
@@ -348,7 +353,11 @@ impl Cxx {
     }
 
     fn generate_cxx_signatures(&self) -> TokenStream {
-        let cxx_sig: Vec<TokenStream> = self.all_cxx_fn.iter().flat_map(|(_, vec_cxx_fn)| vec_cxx_fn.iter().map(|cxx_fn| cxx_fn.as_cxx_sig())).collect();
+        let cxx_sig: Vec<TokenStream> = self
+            .all_cxx_fn
+            .iter()
+            .flat_map(|(_, vec_cxx_fn)| vec_cxx_fn.iter().map(|cxx_fn| cxx_fn.as_cxx_sig()))
+            .collect();
         quote!(#(#cxx_sig)*)
     }
 
@@ -411,8 +420,8 @@ impl Cxx {
                     }
             }
         ));
-        file.write_all(parsed_file_formated.as_bytes()).expect("final writing of cxx::bridge failed")
-
+        file.write_all(parsed_file_formated.as_bytes())
+            .expect("final writing of cxx::bridge failed")
     }
 }
 

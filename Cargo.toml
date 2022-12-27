@@ -18,3 +18,6 @@ prettyplease = "0.1.22"
 version = "1"
 default-features = false
 features = ["full", "parsing", "printing", "visit", "visit-mut", "derive", "clone-impls", "extra-traits"]
+
+[dev-dependencies]
+cxx = "1.0"

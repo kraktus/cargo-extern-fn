@@ -4,9 +4,9 @@ use std::{
     path::PathBuf,
 };
 
+use crate::cxx::Cxx;
 use cbindgen::Cbindgen;
 use clap::{ArgAction, Args, Parser, Subcommand};
-use cxx::Cxx;
 use env_logger::Builder;
 use log::{debug, info, trace, LevelFilter};
 use proc_macro2::TokenStream;

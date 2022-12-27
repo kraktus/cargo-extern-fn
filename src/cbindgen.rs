@@ -114,9 +114,11 @@ impl ExternaliseFn {
                     union(g1, extern_fn.sig.generics)
                 });
             for arg in extern_fn.sig.inputs.iter_mut() {
-                if let Some(normalised_arg) =
-                    normalise_receiver_arg(arg, &self.current_impl_ty, Some("_"))
-                {
+                if let Some(normalised_arg) = normalise_receiver_arg(
+                    arg,
+                    self.current_impl_ty.as_ref().and_then(get_ident),
+                    Some("_"),
+                ) {
                     *arg = normalised_arg;
                 }
             }

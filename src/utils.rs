@@ -87,7 +87,7 @@ pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {
 /// `self<SUFFIX>: &<TYPE>`, `self<SUFFIX>: <TYPE>`, `self<SUFFIX>: &mut <TYPE>`
 pub fn normalise_receiver_arg(
     arg: &FnArg,
-    ty: &Option<Type>,
+    ty: Option<Ident>,
     suffix: Option<&str>,
 ) -> Option<FnArg> {
     if let FnArg::Receiver(rec) = arg {
