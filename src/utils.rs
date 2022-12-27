@@ -1,9 +1,11 @@
 use std::collections::HashSet;
+use std::fmt::Display;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
+use syn::parse::Parse;
 use syn::Pat;
 use syn::PatIdent;
 use syn::PatType;
@@ -122,12 +124,42 @@ pub fn is_type(type_as_str: &str, ty: &syn::Type) -> bool {
     }
 }
 
+pub fn is_method(sig: &Signature) -> bool {
+    sig.inputs
+        .iter()
+        .any(|arg| matches!(arg, FnArg::Receiver(_)))
+}
+
+pub enum SelfType {
+    Value,
+    ValueMut,
+    Ref,
+    RefMut,
+}
+
+pub fn method_self_type(arg: &FnArg) -> Option<SelfType> {
+    if let FnArg::Receiver(rec) = arg {
+        Some(match (rec.reference.clone(), rec.mutability) {
+            (None, None) => SelfType::Value,
+            (None, Some(_)) => SelfType::ValueMut,
+            (Some(_), None) => SelfType::Ref,
+            (Some(_), Some(_)) => SelfType::RefMut,
+        })
+    } else {
+        None
+    }
+}
+
 // given a function signature `fn foo(u: usize, bar: &str) -> bool`
 // return an expression calling that function:
 // `foo(u, bar)`
 //
 // TODO would it be better if trying to build it as a `syn::Call` type?
-pub fn call_function_from_sig(ty: Option<&Type>, sig: &Signature, self_suffix: &str) -> TokenStream {
+pub fn call_function_from_sig<T: ToTokens>(
+    ty: Option<&Type>,
+    sig: &Signature,
+    self_ident: T,
+) -> TokenStream {
     let fn_ident = format!(
         "{}{}",
         ty.map(|ty| quote!(<#ty>::).to_string()).unwrap_or_default(),
@@ -137,7 +169,7 @@ pub fn call_function_from_sig(ty: Option<&Type>, sig: &Signature, self_suffix: &
     let mut iter_peek = sig.inputs.iter().peekable();
     // we scrap the types of the signature to effectively use their idents as arguments
     while let Some(arg) = iter_peek.next() {
-        let self_ident = format_ident!("self{}", self_suffix);
+        let self_ident: Ident = syn::parse2(quote!(#self_ident)).unwrap();
         match arg {
             FnArg::Receiver(_) => quote!(#self_ident).to_tokens(&mut args_buf),
             FnArg::Typed(PatType { pat, .. }) => {
@@ -151,7 +183,7 @@ pub fn call_function_from_sig(ty: Option<&Type>, sig: &Signature, self_suffix: &
         }
     }
 
-    format!("{{ {fn_ident}({args_buf}) }}").parse().unwrap()
+    format!("{fn_ident}({args_buf})").parse().unwrap()
 }
 
 // return the union of both generics constraints
@@ -225,8 +257,8 @@ mod tests {
     fn test_call_function_from_sig() {
         let sig: Signature = syn::parse_str("fn foo(f: Foo, x: u64) -> bool").unwrap();
         assert_eq!(
-            "{ foo (f , x) }",
-            format!("{}", call_function_from_sig(None, &sig, "_"))
+            "foo (f , x)",
+            format!("{}", call_function_from_sig(None, &sig, "self_"))
         )
     }
 
@@ -235,8 +267,8 @@ mod tests {
         let sig: Signature = syn::parse_str("fn foo(&self) -> u8").unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
         assert_eq!(
-            "{ < bar :: Bar > :: foo (self_) }",
-            format!("{}", call_function_from_sig(Some(&ty), &sig, "_"))
+            "< bar :: Bar > :: foo (self_)",
+            format!("{}", call_function_from_sig(Some(&ty), &sig, "self_"))
         )
     }
 

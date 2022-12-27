@@ -5,11 +5,11 @@ use proc_macro2::TokenStream;
 use syn::parse::{Parse, ParseStream};
 
 use syn::visit::{self, Visit};
+use syn::{parse_quote, Generics, ImplItemMethod, Item, ItemFn, ItemImpl};
 use syn::{
     visit_mut::{self, VisitMut},
     Attribute, ItemEnum, ItemStruct, Type, Visibility,
 };
-use syn::{Generics, ImplItemMethod, Item, ItemFn, ItemImpl};
 
 use quote::{format_ident, quote, ToTokens};
 
@@ -121,12 +121,8 @@ impl ExternaliseFn {
                 }
             }
             // the body of the function should just be calling the original function
-            extern_fn.block = syn::parse2(call_function_from_sig(
-                self.current_impl_ty.as_ref(),
-                &item_fn.sig,
-                "_"
-            ))
-            .unwrap();
+            let call_fn = call_function_from_sig(self.current_impl_ty.as_ref(), &item_fn.sig, "_");
+            extern_fn.block = parse_quote!({#call_fn});
 
             self.externalised_fn_buf.push(extern_fn);
         }

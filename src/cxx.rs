@@ -6,19 +6,20 @@ use log::trace;
 use proc_macro2::TokenStream;
 
 use syn::visit::{self, Visit};
-use syn::{Fields, Ident, ImplItemMethod, Item, ItemFn, ItemImpl, ReturnType, Type};
+use syn::{parse_quote, Fields, Ident, ImplItemMethod, Item, ItemFn, ItemImpl, ReturnType, Type};
 use syn::{ItemEnum, ItemStruct, Visibility};
 
 use quote::{format_ident, quote, ToTokens};
 
-use crate::utils::is_type;
 use crate::utils::{
-    attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, normalise_receiver_arg,
+    attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, method_self_type,
+    normalise_receiver_arg, SelfType,
 };
+use crate::utils::{call_function_from_sig, is_type};
 
 #[derive(Default, Debug)]
 pub struct Cxx {
-    all_cxx_fn: Vec<syn::ItemFn>,
+    all_cxx_fn: Vec<CxxFn>,
     all_cxx_struct_or_enum: Vec<StructOrEnum>, // TODO maybe switch to derive
 }
 
@@ -130,16 +131,18 @@ struct GatherSignatures {
     // only set if not a trait method
     current_impl_ty: Option<syn::Type>,
     allowed_idents: HashSet<Ident>,
-    cxx_fn_buf: Vec<ItemFn>,
+    cxx_fn_buf: Vec<CxxFn>,
 }
 
+#[derive(Debug, Clone)]
 struct CxxFn {
     pub item_fn: ItemFn,
+    ty: Option<Type>,
     pub return_is_opt: bool, // cxx does not handle `Option`... convert to `Result`
 }
 
 impl CxxFn {
-    fn new(item_fn: ItemFn) -> Self {
+    fn new(item_fn: ItemFn, ty: Option<Type>) -> Self {
         let return_is_opt = if let ReturnType::Type(_, ty) = item_fn.sig.output.clone() {
             is_type("Option", &*ty)
         } else {
@@ -148,11 +151,17 @@ impl CxxFn {
         Self {
             item_fn,
             return_is_opt,
+            ty,
         }
     }
 
     fn as_cxx_sig(&self) -> TokenStream {
         let mut cxx_sig = self.item_fn.sig.clone();
+        for arg in cxx_sig.inputs.iter_mut() {
+            if let Some(normalised_arg) = normalise_receiver_arg(arg, &self.ty, None) {
+                *arg = normalised_arg;
+            }
+        }
         if self.return_is_opt {
             if let ReturnType::Type(_, ref mut ty) = cxx_sig.output {
                 if let Type::Path(ref mut p) = **ty {
@@ -164,7 +173,60 @@ impl CxxFn {
     }
 
     fn as_cxx_impl(&self) -> TokenStream {
-        todo!()
+        let mut cxx_item = self.item_fn.clone();
+        if self.return_is_opt {
+            if let ReturnType::Type(_, ref mut ty) = cxx_item.sig.output {
+                if let Type::Path(ref mut p) = **ty {
+                    p.path.segments[0].ident = syn::parse_str("ResultFfi").unwrap();
+                }
+            }
+        }
+        let self_type_opt = cxx_item.sig.inputs.iter().find_map(method_self_type);
+        let before_call_fn = if let Some(self_type) = self_type_opt.as_ref() {
+            let ty_ = self.ty.as_ref().expect("No type defined in method");
+            match self_type {
+                SelfType::ValueMut => quote!(let mut x = <#ty_>::from(self);),
+                SelfType::RefMut => quote!(let mut x = <#ty_>::from(self.clone());),
+                _ => TokenStream::new(),
+            }
+        } else {
+            TokenStream::new()
+        };
+
+        let mut call_fn = if let Some(self_type) = self_type_opt.as_ref() {
+            let ty_ = self.ty.as_ref().expect("No type defined in method");
+            match self_type {
+                SelfType::Value => {
+                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, "self.into()")
+                }
+                SelfType::ValueMut => call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, "x"),
+                SelfType::Ref => call_function_from_sig(
+                    self.ty.as_ref(),
+                    &cxx_item.sig,
+                    quote!(<#ty_>::from(self.clone())),
+                ),
+                SelfType::RefMut => {
+                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, "&mut x")
+                }
+            }
+        } else {
+            call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, "")
+        };
+        if self.return_is_opt {
+            call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or(()));
+        };
+
+        let after_call_fn = if let Some(self_type) = self_type_opt.as_ref() {
+            let ty_ = self.ty.as_ref().expect("No type defined in method");
+            match self_type {
+                SelfType::ValueMut => quote!(let mut x = <#ty_>::from(self);),
+                SelfType::RefMut => quote!(let mut x = <#ty_>::from(self.clone());),
+                _ => TokenStream::new(),
+            }
+        } else {
+            TokenStream::new()
+        };
+        quote!(#cxx_item)
     }
 }
 
@@ -193,15 +255,9 @@ impl GatherSignatures {
             if let Some(prefix) = prefix_opt {
                 extern_fn.sig.ident = format_ident!("{}{}", prefix, extern_fn.sig.ident);
             }
-            for arg in extern_fn.sig.inputs.iter_mut() {
-                if let Some(normalised_arg) =
-                    normalise_receiver_arg(arg, &self.current_impl_ty, None)
-                {
-                    *arg = normalised_arg;
-                }
-            }
 
-            self.cxx_fn_buf.push(extern_fn);
+            self.cxx_fn_buf
+                .push(CxxFn::new(extern_fn, self.current_impl_ty.clone()));
         }
     }
 }
@@ -353,7 +409,7 @@ mod tests {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn);
+        let cxx_fn = CxxFn::new(item_fn, None);
         let cxx_sig = cxx_fn.as_cxx_sig();
 
         assert_eq!(
@@ -370,7 +426,7 @@ mod tests {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn);
+        let cxx_fn = CxxFn::new(item_fn, None);
         let cxx_sig = cxx_fn.as_cxx_sig();
 
         assert_eq!(
