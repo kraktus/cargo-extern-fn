@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use std::fs::{OpenOptions, File};
+use std::io::{Read, Write};
 use std::path::Path;
 
 use log::trace;
@@ -346,7 +348,8 @@ impl Cxx {
     }
 
     fn generate_cxx_signatures(&self) -> TokenStream {
-        todo!()
+        let cxx_sig: Vec<TokenStream> = self.all_cxx_fn.iter().flat_map(|(_, vec_cxx_fn)| vec_cxx_fn.iter().map(|cxx_fn| cxx_fn.as_cxx_sig())).collect();
+        quote!(#(#cxx_sig)*)
     }
 
     pub fn handle_file(&mut self, parsed_file: &syn::File) -> TokenStream {
@@ -380,21 +383,36 @@ impl Cxx {
         parsed_file_tokens
     }
 
-    pub fn generate_ffi_bridge_and_impl(self, _code_dir: &Path) {
-        todo!()
-        // let mut file = File::open(code_dir.join("lib.rs"))
-        //     .or_else(|_| {
-        //         OpenOptions::new()
-        //             .create(true)
-        //             .write(true)
-        //             .read(true)
-        //             .open(code_dir.join("main.rs"))
-        //     })
-        //     .expect("reading lib.rs and main.rs in src_dir failed");
-        // let mut src_file = String::new();
-        // file.read_to_string(&mut src_file)
-        //     .expect("Unable to read file");
-        // let mut parsed_file = syn::parse_file(&src_file).expect("Unable to parse file");
+    pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
+        let mut file = File::open(code_dir.join("lib.rs"))
+            .or_else(|_| {
+                OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .read(true)
+                    .open(code_dir.join("main.rs"))
+            })
+            .expect("reading lib.rs and main.rs in src_dir failed");
+        let mut src_file = String::new();
+        file.read_to_string(&mut src_file)
+            .expect("Unable to read file");
+        let parsed_file = syn::parse_file(&src_file).expect("Unable to parse file");
+        let cxx_struct_declarations = self.generate_cxx_types();
+        let cxx_sig = self.generate_cxx_signatures();
+        let parsed_file_formated = prettyplease::unparse(&parse_quote!(
+            #parsed_file
+
+            #[cxx::bridge]
+            pub mod ffi {
+                #cxx_struct_declarations
+
+                    extern "Rust" {
+                        #cxx_sig
+                    }
+            }
+        ));
+        file.write_all(parsed_file_formated.as_bytes()).expect("final writing of cxx::bridge failed")
+
     }
 }
 
