@@ -21,7 +21,8 @@ use syn::{
 use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
-    attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, normalise_receiver_arg, union,
+    attrs, call_function_from_sig, get_ident, get_ident_as_function, meta_is_extern_fn_skip,
+    normalise_receiver_arg, union,
 };
 
 #[derive(Args, Debug)]
@@ -127,44 +128,14 @@ impl ExternaliseFn {
                 }
             }
             // the body of the function should just be calling the original function
-            extern_fn.block = syn::parse2(self.call_function_from_sig(&item_fn.sig)).unwrap();
+            extern_fn.block = syn::parse2(call_function_from_sig(
+                self.current_impl_ty.as_ref(),
+                &item_fn.sig,
+            ))
+            .unwrap();
 
             self.externalised_fn_buf.push(extern_fn);
         }
-    }
-
-    // given a function signature `fn foo(u: usize, bar: &str) -> bool`
-    // return an expression calling that function:
-    // `foo(u, bar)`
-    //
-    // TODO would it be better if trying to build it as a `syn::Call` type?
-    fn call_function_from_sig(&self, sig: &Signature) -> proc_macro2::TokenStream {
-        let fn_ident = format!(
-            "{}{}",
-            self.current_impl_ty
-                .as_ref()
-                .map(|ty| quote!(<#ty>::).to_string())
-                .unwrap_or_default(),
-            sig.ident
-        );
-        let mut args_buf = proc_macro2::TokenStream::new();
-        let mut iter_peek = sig.inputs.iter().peekable();
-        // we scrap the types of the signature to effectively use their idents as arguments
-        while let Some(arg) = iter_peek.next() {
-            match arg {
-                FnArg::Receiver(_) => quote!(self_).to_tokens(&mut args_buf),
-                FnArg::Typed(PatType { pat, .. }) => {
-                    if let Pat::Ident(PatIdent { ident, .. }) = (**pat).clone() {
-                        quote!(#ident).to_tokens(&mut args_buf)
-                    }
-                }
-            }
-            if iter_peek.peek().is_some() {
-                quote!(,).to_tokens(&mut args_buf)
-            }
-        }
-
-        format!("{{ {fn_ident}({args_buf}) }}").parse().unwrap()
     }
 }
 
@@ -222,51 +193,5 @@ impl Cbindgen {
         let mut parsed_file_tokens = quote!(#parsed_file);
         externalised_fn.to_tokens(&mut parsed_file_tokens);
         parsed_file_tokens
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use proc_macro2::Span;
-
-    use super::*;
-
-    #[test]
-    fn test_call_function_from_sig() {
-        let sig: Signature = syn::parse_str("fn foo(f: Foo, x: u64) -> bool").unwrap();
-        let ext = ExternaliseFn::default();
-        assert_eq!(
-            "{ foo (f , x) }",
-            format!("{}", ext.call_function_from_sig(&sig))
-        )
-    }
-
-    #[test]
-    fn test_call_method_from_sig() {
-        let sig: Signature = syn::parse_str("fn foo(&self) -> u8").unwrap();
-        let mut ext = ExternaliseFn::default();
-        ext.current_impl_ty = Some(syn::parse_str("bar::Bar").unwrap());
-        assert_eq!(
-            "{ < bar :: Bar > :: foo (self_) }",
-            format!("{}", ext.call_function_from_sig(&sig))
-        )
-    }
-
-    #[test]
-    fn test_ident() {
-        let ty: Type = syn::parse_str("Gen<T>").unwrap();
-        assert_eq!(
-            Some(Ident::new("gen_", Span::call_site())),
-            get_ident_as_function(&ty)
-        )
-    }
-
-    #[test]
-    fn test_ident2() {
-        let ty: Type = syn::parse_str("foo::Gen<T>").unwrap();
-        assert_eq!(
-            Some(Ident::new("foo_gen_", Span::call_site())),
-            get_ident_as_function(&ty)
-        )
     }
 }

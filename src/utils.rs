@@ -1,8 +1,13 @@
 use std::collections::HashSet;
 
-use proc_macro2::Ident;
+use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
 use quote::quote;
+use quote::ToTokens;
+use syn::Pat;
+use syn::PatIdent;
+use syn::PatType;
+use syn::Signature;
 use syn::{
     punctuated::{Pair, Punctuated},
     Attribute, FnArg, GenericParam, Generics, Item, ItemConst, ItemEnum, ItemExternCrate, ItemFn,
@@ -117,6 +122,37 @@ pub fn is_type(type_as_str: &str, ty: &syn::Type) -> bool {
     }
 }
 
+// given a function signature `fn foo(u: usize, bar: &str) -> bool`
+// return an expression calling that function:
+// `foo(u, bar)`
+//
+// TODO would it be better if trying to build it as a `syn::Call` type?
+pub fn call_function_from_sig(ty: Option<&Type>, sig: &Signature) -> TokenStream {
+    let fn_ident = format!(
+        "{}{}",
+        ty.map(|ty| quote!(<#ty>::).to_string()).unwrap_or_default(),
+        sig.ident
+    );
+    let mut args_buf = TokenStream::new();
+    let mut iter_peek = sig.inputs.iter().peekable();
+    // we scrap the types of the signature to effectively use their idents as arguments
+    while let Some(arg) = iter_peek.next() {
+        match arg {
+            FnArg::Receiver(_) => quote!(self_).to_tokens(&mut args_buf),
+            FnArg::Typed(PatType { pat, .. }) => {
+                if let Pat::Ident(PatIdent { ident, .. }) = (**pat).clone() {
+                    quote!(#ident).to_tokens(&mut args_buf)
+                }
+            }
+        }
+        if iter_peek.peek().is_some() {
+            quote!(,).to_tokens(&mut args_buf)
+        }
+    }
+
+    format!("{{ {fn_ident}({args_buf}) }}").parse().unwrap()
+}
+
 // return the union of both generics constraints
 // it's the union in term of quantity but it's effectively
 // the intersection in terms of predicates
@@ -157,5 +193,67 @@ pub fn union(g1: Generics, g2: Generics) -> Generics {
         params: union_params,
         gt_token: g1.gt_token.or(g2.gt_token),
         where_clause: union_where,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::Deref;
+
+    use proc_macro2::Span;
+    use syn::parse::{Parse, ParseStream};
+
+    use super::*;
+
+    struct TypeTest(Type);
+
+    impl Parse for TypeTest {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            Ok(Self(Type::without_plus(input)?))
+        }
+    }
+    impl Deref for TypeTest {
+        type Target = Type;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn test_call_function_from_sig() {
+        let sig: Signature = syn::parse_str("fn foo(f: Foo, x: u64) -> bool").unwrap();
+        assert_eq!(
+            "{ foo (f , x) }",
+            format!("{}", call_function_from_sig(None, &sig))
+        )
+    }
+
+    #[test]
+    fn test_call_method_from_sig() {
+        let sig: Signature = syn::parse_str("fn foo(&self) -> u8").unwrap();
+        let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
+        assert_eq!(
+            "{ < bar :: Bar > :: foo (self_) }",
+            format!("{}", call_function_from_sig(Some(&ty), &sig))
+        )
+    }
+
+    #[test]
+    fn test_ident() {
+        let ty: Type = syn::parse_str("Gen<T>").unwrap();
+        assert_eq!(
+            Some(Ident::new("gen_", Span::call_site())),
+            get_ident_as_function(&ty)
+        )
+    }
+
+    #[test]
+    fn test_ident2() {
+        let ty: Type = syn::parse_str("foo::Gen<T>").unwrap();
+        assert_eq!(
+            Some(Ident::new("foo_gen_", Span::call_site())),
+            get_ident_as_function(&ty)
+        )
     }
 }
