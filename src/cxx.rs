@@ -216,17 +216,15 @@ impl CxxFn {
             call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or(()));
         };
 
-        let after_call_fn = if let Some(self_type) = self_type_opt.as_ref() {
-            let ty_ = self.ty.as_ref().expect("No type defined in method");
-            match self_type {
-                SelfType::ValueMut => quote!(let mut x = <#ty_>::from(self);),
-                SelfType::RefMut => quote!(let mut x = <#ty_>::from(self.clone());),
-                _ => TokenStream::new(),
-            }
+        let after_call_fn = if let Some(SelfType::ValueMut) = self_type_opt.as_ref() {
+            quote!(*self = Self::from(x);)
         } else {
             TokenStream::new()
         };
-        quote!(#cxx_item)
+        quote!(#before_call_fn
+            let res = #call_fn;
+            #after_call_fn
+            res)
     }
 }
 
