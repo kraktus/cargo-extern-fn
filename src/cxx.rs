@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use std::path::Path;
 
@@ -19,7 +19,7 @@ use crate::utils::{call_function_from_sig, is_type};
 
 #[derive(Default, Debug)]
 pub struct Cxx {
-    all_cxx_fn: Vec<CxxFn>,
+    all_cxx_fn: HashMap<Option<Type>, Vec<CxxFn>>,
     all_cxx_struct_or_enum: Vec<StructOrEnum>, // TODO maybe switch to derive
 }
 
@@ -54,19 +54,10 @@ impl StructOrEnum {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct CreateRawStruct {
     pub_struct_or_enum: Vec<StructOrEnum>,
     idents: HashSet<Ident>, // idents of struct/enums. TODO union?
-}
-
-impl Default for CreateRawStruct {
-    fn default() -> Self {
-        Self {
-            pub_struct_or_enum: vec![],
-            idents: HashSet::new(),
-        }
-    }
 }
 
 impl CreateRawStruct {
@@ -131,7 +122,7 @@ struct GatherSignatures {
     // only set if not a trait method
     current_impl_ty: Option<syn::Type>,
     allowed_idents: HashSet<Ident>,
-    cxx_fn_buf: Vec<CxxFn>,
+    cxx_fn_buf: HashMap<Option<Type>, Vec<CxxFn>>,
 }
 
 #[derive(Debug, Clone)]
@@ -240,7 +231,7 @@ impl GatherSignatures {
         Self {
             current_impl_ty: None,
             allowed_idents,
-            cxx_fn_buf: vec![],
+            cxx_fn_buf: HashMap::new(),
         }
     }
 
@@ -257,11 +248,17 @@ impl GatherSignatures {
         {
             let mut extern_fn = item_fn.clone();
             trace!("handling fn {:?}", extern_fn.sig.ident);
-            if let Some(prefix) = prefix_opt {
+            if let Some(prefix) = prefix_opt.as_ref() {
                 extern_fn.sig.ident = format_ident!("{}{}", prefix, extern_fn.sig.ident);
             }
 
             self.cxx_fn_buf
+                .entry(if prefix_opt.is_some() {
+                    None // static method are converted into free functions
+                } else {
+                    self.current_impl_ty.clone()
+                })
+                .or_default()
                 .push(CxxFn::new(extern_fn, self.current_impl_ty.clone()));
         }
     }
@@ -362,7 +359,7 @@ impl Cxx {
         let mut gather_sig = GatherSignatures::new(idents);
         gather_sig.visit_file(parsed_file);
         trace!("Finished GatherSignatures pass");
-        self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
+        self.all_cxx_fn = gather_sig.cxx_fn_buf;
 
         let mut parsed_file_tokens = quote!(#parsed_file);
         for struct_or_enum in pub_struct_or_enum.iter() {
