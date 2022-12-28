@@ -58,6 +58,39 @@ impl StructOrEnum {
             StructOrEnum::E(x) => &mut x.ident,
         }
     }
+
+    fn as_raw_struct(&self) -> Option<ItemStruct> {
+        match self {
+            StructOrEnum::S(struct_) => {
+                trace!("Creating raw struct of {}", struct_.ident);
+                let mut raw_struct = struct_.clone();
+                for field_mut in raw_struct.fields.iter_mut() {
+                    field_mut.vis = struct_.vis.clone() // make it public, not sure if reusing the span will cause issue
+                }
+                // tuple struct are not supported by cxx
+                // need to be converted to named-struct:
+                // S(A,B,C) -> S {n0: A, n1: B, n2: C}
+                if matches!(raw_struct.fields, Fields::Unnamed(_)) {
+                    let mut named_fields = Punctuated::<_, Token![,]>::new();
+                    if let Fields::Unnamed(fields) = raw_struct.fields {
+                        for (i, field) in fields.unnamed.iter().enumerate() {
+                            let mut field_converted_to_named = field.clone();
+                            field_converted_to_named.ident = Some(format_ident!("n{}", i));
+                            named_fields.push(field_converted_to_named);
+                        }
+                    }
+                    raw_struct.fields = Fields::Named(FieldsNamed {
+                        brace_token: syn::token::Brace {
+                            span: Span::call_site(),
+                        },
+                        named: named_fields,
+                    })
+                }
+                Some(raw_struct)
+            }
+            StructOrEnum::E(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -81,31 +114,8 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
         if matches!(struct_.vis, Visibility::Public(_)) && struct_.generics.params.is_empty()
         // generics not handled by cxx
         {
-            trace!("Creating pub struct of {}", struct_.ident);
-            let mut raw_struct = struct_.clone();
-            for field_mut in raw_struct.fields.iter_mut() {
-                field_mut.vis = struct_.vis.clone() // make it public, not sure if reusing the span will cause issue
-            }
-            // tuple struct are not supported by cxx
-            // need to be converted to named-struct:
-            // S(A,B,C) -> S {n0: A, n1: B, n2: C}
-            if matches!(raw_struct.fields, Fields::Unnamed(_)) {
-                let mut named_fields = Punctuated::<_, Token![,]>::new();
-                if let Fields::Unnamed(fields) = raw_struct.fields {
-                    for (i, field) in fields.unnamed.iter().enumerate() {
-                        let mut field_converted_to_named = field.clone();
-                        field_converted_to_named.ident = Some(format_ident!("n{}", i));
-                        named_fields.push(field_converted_to_named);
-                    }
-                }
-                raw_struct.fields = Fields::Named(FieldsNamed {
-                    brace_token: syn::token::Brace {
-                        span: Span::call_site(),
-                    },
-                    named: named_fields,
-                })
-            }
-            self.pub_struct_or_enum.push(StructOrEnum::S(raw_struct));
+            self.pub_struct_or_enum
+                .push(StructOrEnum::S(struct_.clone()));
             self.idents.insert(struct_.ident.clone());
         }
         visit::visit_item_struct(self, struct_);
@@ -399,6 +409,21 @@ impl Cxx {
         quote!(#(#cxx_sig)*)
     }
 
+    fn generate_conversions(pub_struct_or_enum: &[StructOrEnum], buf: &mut TokenStream) {
+        for struct_or_enum in pub_struct_or_enum.iter() {
+            if let StructOrEnum::S(pub_struct) = struct_or_enum {
+                let mut raw_struct = pub_struct.clone();
+                let ident_raw: Ident = format_ident!("{}Raw", pub_struct.ident);
+                raw_struct.ident = ident_raw.clone();
+                raw_struct.to_tokens(buf);
+                trace!("Generating conversion impl of {ident_raw}");
+                impl_from_x_to_y(&pub_struct, &raw_struct).to_tokens(buf);
+                impl_from_x_to_y(&raw_struct, &pub_struct).to_tokens(buf);
+                trace!("Finished conversion impl of {ident_raw}");
+            }
+        }
+    }
+
     pub fn handle_file(&mut self, parsed_file: &syn::File) -> TokenStream {
         trace!("Starting CreateRawStruct pass");
         let mut create_raw_struct = CreateRawStruct::default();
@@ -410,20 +435,8 @@ impl Cxx {
         gather_sig.visit_file(parsed_file);
         trace!("Finished GatherSignatures pass");
         self.all_cxx_fn = gather_sig.cxx_fn_buf;
-
         let mut parsed_file_tokens = quote!(#parsed_file);
-        for struct_or_enum in pub_struct_or_enum.iter() {
-            if let StructOrEnum::S(pub_struct) = struct_or_enum {
-                let mut raw_struct = pub_struct.clone();
-                let ident_raw: Ident = format_ident!("{}Raw", pub_struct.ident);
-                raw_struct.ident = ident_raw.clone();
-                raw_struct.to_tokens(&mut parsed_file_tokens);
-                trace!("Generating conversion impl of {ident_raw}");
-                impl_from_x_to_y(&pub_struct, &raw_struct).to_tokens(&mut parsed_file_tokens);
-                impl_from_x_to_y(&raw_struct, &pub_struct).to_tokens(&mut parsed_file_tokens);
-                trace!("Finished conversion impl of {ident_raw}");
-            }
-        }
+        Self::generate_conversions(&pub_struct_or_enum, &mut parsed_file_tokens);
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
         parsed_file_tokens
     }
@@ -617,15 +630,42 @@ mod tests {
         let item_struct: ItemStruct = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
         let mut create_raw_struct = CreateRawStruct::default();
         create_raw_struct.visit_item_struct(&item_struct);
-        let (raw_vec, idents) = create_raw_struct.results();
+        let (vec, idents) = create_raw_struct.results();
+        let raw_structs = vec.into_iter().flat_map(|x| x.as_raw_struct());
         assert_eq!(idents, [format_ident!("Foo")].into());
 
         assert_eq!(
-            prettyplease::unparse(&parse_quote!(#(#raw_vec)*)),
+            prettyplease::unparse(&parse_quote!(#(#raw_structs)*)),
             "pub struct Foo {
     pub n0: usize,
     pub n1: u64,
     pub n2: u8,
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_raw_struct_conversions_with_struc() {
+        let item_struct: ItemStruct = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
+        let mut create_raw_struct = CreateRawStruct::default();
+        create_raw_struct.visit_item_struct(&item_struct);
+        let (raw_vec, _) = create_raw_struct.results();
+        let mut buf = quote!(#item_struct);
+        Cxx::generate_conversions(&raw_vec, &mut buf);
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#buf)),
+            "pub struct Foo(usize, u64, u8);
+pub struct FooRaw(usize, u64, u8);
+impl From<Foo> for FooRaw {
+    fn from(x: Foo) -> Self {
+        Self(x.0, x.1, x.2)
+    }
+}
+impl From<FooRaw> for Foo {
+    fn from(x: FooRaw) -> Self {
+        Self(x.0, x.1, x.2)
+    }
 }
 "
         )
