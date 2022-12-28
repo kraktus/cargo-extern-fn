@@ -358,9 +358,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
 fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
     let x_ident = &x.ident;
     let is_x_unnamed = matches!(&x.fields, Fields::Unnamed(_));
-
     let y_ident = &y.ident;
-    let is_y_named = matches!(&y.fields, Fields::Named(_));
     let body = match &y.fields {
         Fields::Named(nameds) => {
             let named_token = nameds.named.iter().enumerate().map(|(i, f)| {
@@ -378,10 +376,11 @@ fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
             let unnamed_token = (0..unnameds.unnamed.len())
                 .map(Index::from)
                 .map(|i| // hardcode the fact that named fields are of the form nX, for named-struct -> unnamed struct conversions
-                    if is_y_named {
-                    quote!(x.n #i)
+                    if is_x_unnamed {
+                     quote!(x.#i)
                 } else {
-                    quote!(x.#i)
+                    let named_ident = format_ident!("n{}", i);
+                     quote!(x.#named_ident)
                 });
             quote!((#(#unnamed_token),*))
         }
@@ -419,11 +418,11 @@ impl Cxx {
 
     fn generate_raw_and_conversions(pub_struct_or_enum: &[StructOrEnum], buf: &mut TokenStream) {
         for (original, raw_struct) in pub_struct_or_enum.iter().flat_map(|x| x.original_and_raw()) {
-                raw_struct.to_tokens(buf);
-                trace!("Generating conversion impl of {}", raw_struct.ident);
-                impl_from_x_to_y(&original, &raw_struct).to_tokens(buf);
-                impl_from_x_to_y(&raw_struct, &original).to_tokens(buf);
-                trace!("Finished conversion impl of {}", raw_struct.ident);
+            raw_struct.to_tokens(buf);
+            trace!("Generating conversion impl of {}", raw_struct.ident);
+            impl_from_x_to_y(&original, &raw_struct).to_tokens(buf);
+            impl_from_x_to_y(&raw_struct, &original).to_tokens(buf);
+            trace!("Finished conversion impl of {}", raw_struct.ident);
         }
     }
 
@@ -656,18 +655,23 @@ mod tests {
         let (raw_vec, _) = create_raw_struct.results();
         let mut buf = quote!(#item_struct);
         Cxx::generate_raw_and_conversions(&raw_vec, &mut buf);
+        println!("{buf}");
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#buf)),
             "pub struct Foo(usize, u64, u8);
-pub struct FooRaw(usize, u64, u8);
+pub struct FooRaw {
+    pub n0: usize,
+    pub n1: u64,
+    pub n2: u8,
+}
 impl From<Foo> for FooRaw {
     fn from(x: Foo) -> Self {
-        Self(x.0, x.1, x.2)
+        Self { n0: x.0, n1: x.1, n2: x.2 }
     }
 }
 impl From<FooRaw> for Foo {
     fn from(x: FooRaw) -> Self {
-        Self(x.0, x.1, x.2)
+        Self(x.n0, x.n1, x.n2)
     }
 }
 "
