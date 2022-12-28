@@ -64,6 +64,7 @@ impl StructOrEnum {
             StructOrEnum::S(struct_) => {
                 trace!("Creating raw struct of {}", struct_.ident);
                 let mut raw_struct = struct_.clone();
+                raw_struct.ident = format_ident!("{}Raw", struct_.ident);
                 for field_mut in raw_struct.fields.iter_mut() {
                     field_mut.vis = struct_.vis.clone() // make it public, not sure if reusing the span will cause issue
                 }
@@ -90,6 +91,13 @@ impl StructOrEnum {
             }
             StructOrEnum::E(_) => None,
         }
+    }
+
+    fn original_and_raw(&self) -> Option<(ItemStruct, ItemStruct)> {
+        self.as_raw_struct().and_then(|raw| match self {
+            StructOrEnum::S(original) => Some((original.clone(), raw)),
+            StructOrEnum::E(_) => None,
+        })
     }
 }
 
@@ -409,18 +417,13 @@ impl Cxx {
         quote!(#(#cxx_sig)*)
     }
 
-    fn generate_conversions(pub_struct_or_enum: &[StructOrEnum], buf: &mut TokenStream) {
-        for struct_or_enum in pub_struct_or_enum.iter() {
-            if let StructOrEnum::S(pub_struct) = struct_or_enum {
-                let mut raw_struct = pub_struct.clone();
-                let ident_raw: Ident = format_ident!("{}Raw", pub_struct.ident);
-                raw_struct.ident = ident_raw.clone();
+    fn generate_raw_and_conversions(pub_struct_or_enum: &[StructOrEnum], buf: &mut TokenStream) {
+        for (original, raw_struct) in pub_struct_or_enum.iter().flat_map(|x| x.original_and_raw()) {
                 raw_struct.to_tokens(buf);
-                trace!("Generating conversion impl of {ident_raw}");
-                impl_from_x_to_y(&pub_struct, &raw_struct).to_tokens(buf);
-                impl_from_x_to_y(&raw_struct, &pub_struct).to_tokens(buf);
-                trace!("Finished conversion impl of {ident_raw}");
-            }
+                trace!("Generating conversion impl of {}", raw_struct.ident);
+                impl_from_x_to_y(&original, &raw_struct).to_tokens(buf);
+                impl_from_x_to_y(&raw_struct, &original).to_tokens(buf);
+                trace!("Finished conversion impl of {}", raw_struct.ident);
         }
     }
 
@@ -436,7 +439,7 @@ impl Cxx {
         trace!("Finished GatherSignatures pass");
         self.all_cxx_fn = gather_sig.cxx_fn_buf;
         let mut parsed_file_tokens = quote!(#parsed_file);
-        Self::generate_conversions(&pub_struct_or_enum, &mut parsed_file_tokens);
+        Self::generate_raw_and_conversions(&pub_struct_or_enum, &mut parsed_file_tokens);
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
         parsed_file_tokens
     }
@@ -636,7 +639,7 @@ mod tests {
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#(#raw_structs)*)),
-            "pub struct Foo {
+            "pub struct FooRaw {
     pub n0: usize,
     pub n1: u64,
     pub n2: u8,
@@ -652,7 +655,7 @@ mod tests {
         create_raw_struct.visit_item_struct(&item_struct);
         let (raw_vec, _) = create_raw_struct.results();
         let mut buf = quote!(#item_struct);
-        Cxx::generate_conversions(&raw_vec, &mut buf);
+        Cxx::generate_raw_and_conversions(&raw_vec, &mut buf);
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#buf)),
             "pub struct Foo(usize, u64, u8);
