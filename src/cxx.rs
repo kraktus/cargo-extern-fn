@@ -10,8 +10,8 @@ use proc_macro2::{Span, TokenStream};
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::{
-    parse_quote, Fields, FieldsNamed, Ident, ImplItemMethod, Item, ItemFn, ItemImpl, ReturnType,
-    Token, Type,
+    parse_quote, Fields, FieldsNamed, Ident, ImplItemMethod, Index, Item, ItemFn, ItemImpl,
+    ReturnType, Token, Type,
 };
 use syn::{ItemEnum, ItemStruct, Visibility};
 
@@ -337,25 +337,40 @@ impl<'ast> Visit<'ast> for GatherSignatures {
     }
 }
 
-fn impl_from_x_to_y(x: &Ident, y: &Ident, fields: &Fields) -> TokenStream {
-    let body = match fields {
+fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
+    let x_ident = &x.ident;
+    let is_x_unnamed = matches!(&x.fields, Fields::Unnamed(_));
+
+    let y_ident = &y.ident;
+    let is_y_named = matches!(&y.fields, Fields::Named(_));
+    let body = match &y.fields {
         Fields::Named(nameds) => {
-            let named_token = nameds.named.iter().map(|f| {
+            let named_token = nameds.named.iter().enumerate().map(|(i, f)| {
                 let ident = f.ident.as_ref().expect("named field");
-                quote!(#ident: x.#ident)
+                let unnamed_ident = Index::from(i);
+                if is_x_unnamed {
+                    quote!(#ident: x.#unnamed_ident)
+                } else {
+                    quote!(#ident: x.#ident)
+                }
             });
             quote!({#(#named_token),*})
         }
         Fields::Unnamed(unnameds) => {
             let unnamed_token = (0..unnameds.unnamed.len())
-                .map(syn::Index::from)
-                .map(|i| quote!(x.#i));
+                .map(Index::from)
+                .map(|i| // hardcode the fact that named fields are of the form nX, for named-struct -> unnamed struct conversions
+                    if is_y_named {
+                    quote!(x.n #i)
+                } else {
+                    quote!(x.#i)
+                });
             quote!((#(#unnamed_token),*))
         }
         Fields::Unit => unimplemented!("TBD"),
     };
-    quote!(impl From<#x> for #y {
-        fn from(x: #x) -> Self {
+    quote!(impl From<#x_ident> for #y_ident {
+        fn from(x: #x_ident) -> Self {
             Self #body
         }
     })
@@ -404,10 +419,8 @@ impl Cxx {
                 raw_struct.ident = ident_raw.clone();
                 raw_struct.to_tokens(&mut parsed_file_tokens);
                 trace!("Generating conversion impl of {ident_raw}");
-                impl_from_x_to_y(&pub_struct.ident, &ident_raw, &raw_struct.fields)
-                    .to_tokens(&mut parsed_file_tokens);
-                impl_from_x_to_y(&ident_raw, &pub_struct.ident, &raw_struct.fields)
-                    .to_tokens(&mut parsed_file_tokens);
+                impl_from_x_to_y(&pub_struct, &raw_struct).to_tokens(&mut parsed_file_tokens);
+                impl_from_x_to_y(&raw_struct, &pub_struct).to_tokens(&mut parsed_file_tokens);
                 trace!("Finished conversion impl of {ident_raw}");
             }
         }
@@ -601,10 +614,7 @@ mod tests {
 
     #[test]
     fn test_raw_struct_converting_un_named_tuples() {
-        let item_struct: ItemStruct = syn::parse_str(
-            r#"pub struct Foo(usize, u64, u8);"#,
-        )
-        .unwrap();
+        let item_struct: ItemStruct = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
         let mut create_raw_struct = CreateRawStruct::default();
         create_raw_struct.visit_item_struct(&item_struct);
         let (raw_vec, idents) = create_raw_struct.results();
