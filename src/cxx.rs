@@ -5,10 +5,14 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use log::trace;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 
+use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
-use syn::{parse_quote, Fields, Ident, ImplItemMethod, Item, ItemFn, ItemImpl, ReturnType, Type};
+use syn::{
+    parse_quote, Fields, FieldsNamed, Ident, ImplItemMethod, Item, ItemFn, ItemImpl, ReturnType,
+    Token, Type,
+};
 use syn::{ItemEnum, ItemStruct, Visibility};
 
 use quote::{format_ident, quote, ToTokens};
@@ -81,6 +85,25 @@ impl<'ast> Visit<'ast> for CreateRawStruct {
             let mut raw_struct = struct_.clone();
             for field_mut in raw_struct.fields.iter_mut() {
                 field_mut.vis = struct_.vis.clone() // make it public, not sure if reusing the span will cause issue
+            }
+            // tuple struct are not supported by cxx
+            // need to be converted to named-struct:
+            // S(A,B,C) -> S {n0: A, n1: B, n2: C}
+            if matches!(raw_struct.fields, Fields::Unnamed(_)) {
+                let mut named_fields = Punctuated::<_, Token![,]>::new();
+                if let Fields::Unnamed(fields) = raw_struct.fields {
+                    for (i, field) in fields.unnamed.iter().enumerate() {
+                        let mut field_converted_to_named = field.clone();
+                        field_converted_to_named.ident = Some(format_ident!("n{}", i));
+                        named_fields.push(field_converted_to_named);
+                    }
+                }
+                raw_struct.fields = Fields::Named(FieldsNamed {
+                    brace_token: syn::token::Brace {
+                        span: Span::call_site(),
+                    },
+                    named: named_fields,
+                })
             }
             self.pub_struct_or_enum.push(StructOrEnum::S(raw_struct));
             self.idents.insert(struct_.ident.clone());
@@ -571,6 +594,28 @@ mod tests {
     let res = <bar::Bar>::bday(&mut x);
     *self = Self::from(x);
     res
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_raw_struct_converting_un_named_tuples() {
+        let item_struct: ItemStruct = syn::parse_str(
+            r#"pub struct Foo(usize, u64, u8);"#,
+        )
+        .unwrap();
+        let mut create_raw_struct = CreateRawStruct::default();
+        create_raw_struct.visit_item_struct(&item_struct);
+        let (raw_vec, idents) = create_raw_struct.results();
+        assert_eq!(idents, [format_ident!("Foo")].into());
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#(#raw_vec)*)),
+            "pub struct Foo {
+    pub n0: usize,
+    pub n1: u64,
+    pub n2: u8,
 }
 "
         )
