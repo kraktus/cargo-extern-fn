@@ -10,7 +10,10 @@ pub enum Citizen {
 }
 impl Person {
     pub fn new(age: u8, name: String) -> Person {
-        Self { age: Age(age), name }
+        Self {
+            age: Age(age),
+            name,
+        }
     }
     pub fn is_adult(&self) -> bool {
         self.age.0 >= 18
@@ -19,7 +22,11 @@ impl Person {
         self.age.0 += 1;
     }
     pub fn to_citizen(self) -> Citizen {
-        if self.is_adult() { Citizen::Adult } else { Citizen::Minor }
+        if self.is_adult() {
+            Citizen::Adult
+        } else {
+            Citizen::Minor
+        }
     }
     /// extern_fn:skip
     pub fn name(&self) -> &str {
@@ -49,12 +56,18 @@ pub struct PersonRaw {
 }
 impl From<Person> for PersonRaw {
     fn from(x: Person) -> Self {
-        Self { age: x.age, name: x.name }
+        Self {
+            age: x.age,
+            name: x.name,
+        }
     }
 }
 impl From<PersonRaw> for Person {
     fn from(x: PersonRaw) -> Self {
-        Self { age: x.age, name: x.name }
+        Self {
+            age: x.age,
+            name: x.name,
+        }
     }
 }
 
@@ -83,4 +96,3 @@ pub mod ffi {
         fn to_citizen(self: PersonFfi) -> Citizen;
     }
 }
-

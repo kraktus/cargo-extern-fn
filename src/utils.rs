@@ -6,10 +6,19 @@ use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
 use syn::parse::Parse;
+use syn::GenericArgument;
 use syn::Pat;
 use syn::PatIdent;
 use syn::PatType;
+use syn::ReturnType;
 use syn::Signature;
+use syn::TypeArray;
+use syn::TypeBareFn;
+use syn::TypeGroup;
+use syn::TypeParen;
+use syn::TypeReference;
+use syn::TypeSlice;
+use syn::TypeTuple;
 use syn::{
     punctuated::{Pair, Punctuated},
     Attribute, FnArg, GenericParam, Generics, Item, ItemConst, ItemEnum, ItemExternCrate, ItemFn,
@@ -57,7 +66,7 @@ pub fn meta_is_extern_fn_skip(meta: syn::Result<Meta>) -> bool {
 
 // return the ident of the type if available
 // if the type contains generics such as `Foo<T>`, scrap them,
-// so in our example it would be converted to `foo_`
+// so in our example it would be converted to `Foo`
 pub fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
         let mut segs_without_generics = vec![];
@@ -71,6 +80,62 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
         Some(syn::parse_str(&seg_string).unwrap())
     } else {
         None
+    }
+}
+
+pub fn add_suffix(idents_to_add: &HashSet<Ident>, ty: &mut Type, suffix: &str) {
+    match ty {
+        Type::BareFn(TypeBareFn { inputs, output, .. }) => {
+            for input in inputs {
+                add_suffix(idents_to_add, &mut input.ty, suffix)
+            }
+            if let ReturnType::Type(_, return_type) = output {
+                add_suffix(idents_to_add, return_type, suffix)
+            }
+        }
+        Type::Path(path_ty) => {
+            for p in path_ty.path.segments.iter_mut() {
+                if idents_to_add.contains(&p.ident) {
+                    p.ident = format_ident!("{}{suffix}", p.ident);
+                }
+                match p.arguments {
+                    syn::PathArguments::None => (),
+                    syn::PathArguments::AngleBracketed(ref mut generics) => {
+                        for g in generics.args.iter_mut() {
+                            if let GenericArgument::Type(generic_ty) = g {
+                                add_suffix(idents_to_add, generic_ty, suffix)
+                            }
+                        }
+                    }
+                    syn::PathArguments::Parenthesized(ref mut parenthesised) => {
+                        for generic_input in parenthesised.inputs.iter_mut() {
+                            add_suffix(idents_to_add, generic_input, suffix)
+                        }
+                        if let ReturnType::Type(_, ref mut return_type) = parenthesised.output {
+                            add_suffix(idents_to_add, return_type, suffix)
+                        }
+                    }
+                }
+            }
+        }
+        Type::Reference(TypeReference { elem, .. })
+        | Type::Paren(TypeParen { elem, .. })
+        | Type::Group(TypeGroup { elem, .. })
+        | Type::Array(TypeArray { elem, .. })
+        | Type::Slice(TypeSlice { elem, .. }) => add_suffix(idents_to_add, elem, suffix),
+        Type::Tuple(TypeTuple { elems, .. }) => {
+            for elem in elems {
+                add_suffix(idents_to_add, elem, suffix)
+            }
+        }
+        Type::ImplTrait(_)
+        | Type::Infer(_)
+        | Type::Macro(_)
+        | Type::Ptr(_)
+        | Type::TraitObject(_)
+        | Type::Never(_)
+        | Type::Verbatim(_)
+        | _ => (),
     }
 }
 
