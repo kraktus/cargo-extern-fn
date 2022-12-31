@@ -19,6 +19,8 @@ use syn::TypeParen;
 use syn::TypeReference;
 use syn::TypeSlice;
 use syn::TypeTuple;
+use syn::visit_mut;
+use syn::visit_mut::VisitMut;
 use syn::{
     punctuated::{Pair, Punctuated},
     Attribute, FnArg, GenericParam, Generics, Item, ItemConst, ItemEnum, ItemExternCrate, ItemFn,
@@ -136,6 +138,26 @@ pub fn add_suffix(idents_to_add: &HashSet<Ident>, ty: &mut Type, suffix: &str) {
         | Type::Never(_)
         | Type::Verbatim(_)
         | _ => (),
+    }
+}
+
+pub struct AddSuffix<'a> {
+    suffix: &'a str,
+    idents_to_add: &'a HashSet<Ident>
+}
+
+impl<'a> AddSuffix<'a> {
+    pub fn new(suffix: &'a str, idents_to_add: &'a HashSet<Ident>) -> Self {
+        Self { suffix, idents_to_add }
+    }
+}
+
+impl VisitMut for AddSuffix<'_> {
+    fn visit_ident_mut(&mut self, i: &mut Ident) {
+        if self.idents_to_add.contains(i) {
+            *i = format_ident!("{i}{}", self.suffix);
+        }
+        visit_mut::visit_ident_mut(self, i);
     }
 }
 
@@ -362,11 +384,15 @@ mod tests {
 
     #[test]
     fn test_add_suffix_ty() {
-        let mut ty: Type = syn::parse_str("foo::Gen<Bar>").unwrap();
+        let mut ty_fn: Type = syn::parse_str("foo::Gen<Bar>").unwrap();
+        let mut ty_visitor = ty_fn.clone();
         let idents = [format_ident!("Bar")].into();
+        let mut ffi_visitor = AddSuffix::new("Ffi", &idents);
+        ffi_visitor.visit_type_mut(&mut ty_visitor);
         let ty_ffi: TypeTest = syn::parse_str("foo::Gen<BarFfi>").unwrap();
-        add_suffix(&idents, &mut ty, "Ffi");
-        assert_eq!(ty, ty_ffi.0)
+        add_suffix(&idents, &mut ty_fn, "Ffi");
+        assert_eq!(ty_fn, ty_ffi.0);
+        assert_eq!(ty_fn, ty_visitor);
     }
 
     #[test]

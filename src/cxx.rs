@@ -9,6 +9,7 @@ use proc_macro2::{Span, TokenStream};
 
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
+use syn::visit_mut::VisitMut;
 use syn::{
     parse_quote, Fields, FieldsNamed, Ident, ImplItemMethod, Index, Item, ItemFn, ItemImpl,
     ReturnType, Token, Type,
@@ -59,6 +60,14 @@ impl StructOrEnum {
             StructOrEnum::E(x) => &mut x.ident,
         }
     }
+
+    fn visit_mut<V: VisitMut>(&mut self, visitor: &mut V) {
+        match self {
+            StructOrEnum::S(x) => syn::visit_mut::visit_item_struct_mut(visitor, x),
+            StructOrEnum::E(x) => syn::visit_mut::visit_item_enum_mut(visitor, x),
+        }
+    }
+
     fn as_raw_struct(&self) -> Option<ItemStruct> {
         self.as_x_struct("Raw")
     }
