@@ -65,7 +65,7 @@ impl StructOrEnum {
 
     fn as_ffi(&self) -> StructOrEnum {
         match &self {
-            StructOrEnum::S(x) => Self::S(self.as_x_struct("Ffi").expect("We know it's a struct")),
+            StructOrEnum::S(_x) => Self::S(self.as_x_struct("Ffi").expect("We know it's a struct")),
             StructOrEnum::E(x) => {
                 let mut enum_ffi = x.clone();
                 enum_ffi.ident = format_ident!("{}Ffi", enum_ffi.ident);
