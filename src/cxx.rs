@@ -193,7 +193,7 @@ struct CxxFn {
 impl CxxFn {
     fn new(item_fn: ItemFn, ty: Option<Type>) -> Self {
         let return_is_opt = if let ReturnType::Type(_, ty) = item_fn.sig.output.clone() {
-            is_type("Option", &*ty)
+            is_type("Option", &ty)
         } else {
             false
         };
@@ -334,7 +334,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
                 .map_or(false, |ident| self.allowed_idents.contains(&ident))
         {
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
-            trace!("Looking at impl of {:?}", get_ident(&*item_impl.self_ty))
+            trace!("Looking at impl of {:?}", get_ident(&item_impl.self_ty))
         } else {
             self.current_impl_ty = None;
         }

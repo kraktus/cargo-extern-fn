@@ -109,7 +109,7 @@ impl ExternaliseFn {
                 extern_fn.sig.ident
             );
             extern_fn.sig.generics = generics
-                .clone()
+                
                 .map_or(extern_fn.sig.generics.clone(), |g1| {
                     union(g1, extern_fn.sig.generics)
                 });
@@ -137,7 +137,7 @@ impl<'ast> Visit<'ast> for ExternaliseFn {
         if item_impl.trait_.is_none() {
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
             self.current_generic_bounds = Some(item_impl.generics.clone());
-            trace!("Looking at impl of {:?}", get_ident(&*item_impl.self_ty))
+            trace!("Looking at impl of {:?}", get_ident(&item_impl.self_ty))
         } else {
             self.current_impl_ty = None;
             self.current_generic_bounds = None;
@@ -181,7 +181,7 @@ impl Cbindgen {
         trace!("Finished AddReprC pass");
         let mut externalised_fn = ExternaliseFn::default();
         trace!("Starting ExternaliseFn pass");
-        externalised_fn.visit_file(&parsed_file);
+        externalised_fn.visit_file(parsed_file);
         trace!("Finished ExternaliseFn pass");
         let mut parsed_file_tokens = quote!(#parsed_file);
         externalised_fn.to_tokens(&mut parsed_file_tokens);

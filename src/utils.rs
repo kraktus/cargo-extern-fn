@@ -183,7 +183,7 @@ pub fn normalise_receiver_arg(
 // /!\ Always return `false` if it has a len() > 1 (eg. std::fmt::..)
 pub fn is_type(type_as_str: &str, ty: &syn::Type) -> bool {
     if let syn::Type::Path(ref p) = ty {
-        return p.path.segments.len() == 1 && p.path.segments[0].ident == type_as_str;
+        p.path.segments.len() == 1 && p.path.segments[0].ident == type_as_str
     } else {
         false
     }
