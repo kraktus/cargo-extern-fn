@@ -359,4 +359,13 @@ mod tests {
             get_ident_as_function(&ty)
         )
     }
+
+    #[test]
+    fn test_add_suffix_ty() {
+        let mut ty: Type = syn::parse_str("foo::Gen<Bar>").unwrap();
+        let idents = [format_ident!("Bar")].into();
+        let ty_ffi: TypeTest = syn::parse_str("foo::Gen<BarFfi>").unwrap();
+        add_suffix(&idents, &mut ty, "Ffi");
+        assert_eq!(ty, ty_ffi.0)
+    }
 }
