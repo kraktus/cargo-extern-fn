@@ -368,4 +368,13 @@ mod tests {
         add_suffix(&idents, &mut ty, "Ffi");
         assert_eq!(ty, ty_ffi.0)
     }
+
+    #[test]
+    fn test_add_suffix_ty_slice() {
+        let mut ty: Type = syn::parse_str("&[Bar]").unwrap();
+        let idents = [format_ident!("Bar")].into();
+        let ty_ffi: TypeTest = syn::parse_str("&[BarFfi]").unwrap();
+        add_suffix(&idents, &mut ty, "Ffi");
+        assert_eq!(ty, ty_ffi.0)
+    }
 }
