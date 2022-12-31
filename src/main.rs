@@ -71,7 +71,7 @@ impl Cli {
     fn finish(&self, cxx: Cxx) {
         match &self.cmd {
             Cmd::Cbindgen => (),
-            Cmd::Cxx => cxx.generate_ffi_bridge_and_impl(&self.common.dir),
+            Cmd::Cxx => cxx.generate_ffi_bridge_and_impl(&self.common.dir, self.common.dry),
         }
     }
 }

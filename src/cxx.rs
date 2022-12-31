@@ -27,6 +27,7 @@ use crate::utils::{call_function_from_sig, is_type};
 pub struct Cxx {
     all_cxx_fn: HashMap<Option<Type>, Vec<CxxFn>>,
     all_cxx_struct_or_enum: Vec<StructOrEnum>, // TODO maybe switch to derive
+    all_cxx_idents: HashSet<Ident>,
 }
 
 #[derive(Debug, Clone)]
@@ -447,14 +448,15 @@ impl Cxx {
         let mut gather_sig = GatherSignatures::new(idents);
         gather_sig.visit_file(parsed_file);
         trace!("Finished GatherSignatures pass");
-        self.all_cxx_fn = gather_sig.cxx_fn_buf;
+        self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
+        self.all_cxx_idents.extend(gather_sig.allowed_idents);
         let mut parsed_file_tokens = quote!(#parsed_file);
         Self::generate_raw_and_conversions(&pub_struct_or_enum, &mut parsed_file_tokens);
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
         parsed_file_tokens
     }
 
-    pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path) {
+    pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path, dry: bool) {
         let mut file = File::open(code_dir.join("lib.rs"))
             .or_else(|_| {
                 OpenOptions::new()
@@ -479,8 +481,12 @@ impl Cxx {
                     }
             }
         ));
-        file.write_all(parsed_file_formated.as_bytes())
-            .expect("final writing of cxx::bridge failed")
+        if dry {
+            println!("{parsed_file_formated}")
+        } else {
+            file.write_all(parsed_file_formated.as_bytes())
+                .expect("final writing of cxx::bridge failed")
+        }
     }
 }
 
