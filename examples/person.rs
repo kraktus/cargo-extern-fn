@@ -7,8 +7,8 @@ pub struct Person {
 }
 
 /// This is a doc comment!
-pub enum Citizen<T> {
-    Adult(T),
+pub enum Citizen {
+    Adult,
     Minor,
 }
 
@@ -28,9 +28,9 @@ impl Person {
         self.age.0 += 1
     }
 
-    pub fn to_citizen(self) -> Citizen<Person> {
+    pub fn to_citizen(self) -> Citizen {
         if self.is_adult() {
-            Citizen::Adult(self)
+            Citizen::Adult
         } else {
             Citizen::Minor
         }

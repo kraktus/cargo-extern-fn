@@ -58,13 +58,27 @@ impl StructOrEnum {
             StructOrEnum::E(x) => &mut x.ident,
         }
     }
-
     fn as_raw_struct(&self) -> Option<ItemStruct> {
+        self.as_x_struct("Raw")
+    }
+
+    fn as_ffi(&self) -> StructOrEnum {
+        match &self {
+            StructOrEnum::S(x) => Self::S(self.as_x_struct("Ffi").expect("We know it's a struct")),
+            StructOrEnum::E(x) => {
+                let mut enum_ffi = x.clone();
+                enum_ffi.ident = format_ident!("{}Ffi", enum_ffi.ident);
+                Self::E(enum_ffi)
+            }
+        }
+    }
+
+    fn as_x_struct(&self, suffix: &str) -> Option<ItemStruct> {
         match self {
             StructOrEnum::S(struct_) => {
                 trace!("Creating raw struct of {}", struct_.ident);
                 let mut raw_struct = struct_.clone();
-                raw_struct.ident = format_ident!("{}Raw", struct_.ident);
+                raw_struct.ident = format_ident!("{}{suffix}", struct_.ident);
                 for field_mut in raw_struct.fields.iter_mut() {
                     field_mut.vis = struct_.vis.clone() // make it public, not sure if reusing the span will cause issue
                 }
@@ -396,15 +410,12 @@ fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
 impl Cxx {
     fn generate_cxx_types(&self) -> TokenStream {
         trace!("Generating FFI struct declarations");
-        let mut buf = TokenStream::new();
-        for struct_or_enum in self.all_cxx_struct_or_enum.iter() {
-            let mut ffi_struct = struct_or_enum.clone();
-            let ident_ffi: Ident = format_ident!("{}Ffi", struct_or_enum.ident());
-            *ffi_struct.ident_mut() = ident_ffi.clone();
-            ffi_struct.to_tokens(&mut buf);
-        }
+        let all_ffi = self
+            .all_cxx_struct_or_enum
+            .iter()
+            .map(|enum_or_struct| enum_or_struct.as_ffi());
         trace!("Finished generating FFI struct declarations");
-        buf
+        quote!(#(#all_ffi)*)
     }
 
     fn generate_cxx_signatures(&self) -> TokenStream {
@@ -448,7 +459,7 @@ impl Cxx {
             .or_else(|_| {
                 OpenOptions::new()
                     .create(true)
-                    .write(true)
+                    .append(true)
                     .read(true)
                     .open(code_dir.join("main.rs"))
             })
@@ -456,12 +467,9 @@ impl Cxx {
         let mut src_file = String::new();
         file.read_to_string(&mut src_file)
             .expect("Unable to read file");
-        let parsed_file = syn::parse_file(&src_file).expect("Unable to parse file");
         let cxx_struct_declarations = self.generate_cxx_types();
         let cxx_sig = self.generate_cxx_signatures();
         let parsed_file_formated = prettyplease::unparse(&parse_quote!(
-            #parsed_file
-
             #[cxx::bridge]
             pub mod ffi {
                 #cxx_struct_declarations

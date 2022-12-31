@@ -4,8 +4,8 @@ pub struct Person {
     name: String,
 }
 /// This is a doc comment!
-pub enum Citizen<T> {
-    Adult(T),
+pub enum Citizen {
+    Adult,
     Minor,
 }
 impl Person {
@@ -21,9 +21,9 @@ impl Person {
     pub fn bday(&mut self) {
         self.age.0 += 1;
     }
-    pub fn to_citizen(self) -> Citizen<Person> {
+    pub fn to_citizen(self) -> Citizen {
         if self.is_adult() {
-            Citizen::Adult(self)
+            Citizen::Adult
         } else {
             Citizen::Minor
         }
@@ -37,15 +37,17 @@ fn main() {
     let p = Person::new(45, "john".to_string());
     println!("{}", p.name())
 }
-pub struct AgeRaw(pub u8);
+pub struct AgeRaw {
+    pub n0: u8,
+}
 impl From<Age> for AgeRaw {
     fn from(x: Age) -> Self {
-        Self(x.0)
+        Self { n0: x.0 }
     }
 }
 impl From<AgeRaw> for Age {
     fn from(x: AgeRaw) -> Self {
-        Self(x.0)
+        Self(x.n0)
     }
 }
 pub struct PersonRaw {
@@ -67,4 +69,8 @@ impl From<PersonRaw> for Person {
             name: x.name,
         }
     }
+}
+
+fn main() {
+    todo!()
 }

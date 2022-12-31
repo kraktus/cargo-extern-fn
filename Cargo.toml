@@ -1,23 +1,32 @@
 [package]
+edition = "2021"
 name = "cargo-extern-fn"
 version = "0.1.0"
-edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
-proc-macro2 = "1.0"
-quote = "1"
 env_logger = "0.10"
 log = "0.4"
 prettyplease = "0.1.22"
+proc-macro2 = "1.0"
+quote = "1"
 
 # copied from cargo-expand
 [dependencies.syn]
-version = "1"
 default-features = false
-features = ["full", "parsing", "printing", "visit", "visit-mut", "derive", "clone-impls", "extra-traits"]
+features = [
+  "full",
+  "parsing",
+  "printing",
+  "visit",
+  "visit-mut",
+  "derive",
+  "clone-impls",
+  "extra-traits",
+]
+version = "1"
 
 [dev-dependencies]
 cxx = "1.0"
