@@ -677,7 +677,7 @@ mod tests {
         )
         .unwrap();
         let cxx_fn = CxxFn::new(item_fn, None);
-        let cxx_impl = cxx_fn.as_cxx_impl();
+        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
             format!("{cxx_impl}"),
@@ -695,7 +695,7 @@ mod tests {
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
         let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
-        let cxx_impl = cxx_fn.as_cxx_impl();
+        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
@@ -742,7 +742,7 @@ mod tests {
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
         let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
-        let cxx_impl = cxx_fn.as_cxx_impl();
+        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
@@ -765,7 +765,7 @@ mod tests {
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
         let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
-        let cxx_impl = cxx_fn.as_cxx_impl();
+        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
@@ -789,7 +789,7 @@ mod tests {
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
         let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
-        let cxx_impl = cxx_fn.as_cxx_impl();
+        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
