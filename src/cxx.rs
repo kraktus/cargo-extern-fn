@@ -585,7 +585,7 @@ impl Cxx {
         let ffi_conv = self.generate_ffi_conversions();
         let ffi_impl = self.generate_ffi_impl();
         let parsed_file_formated = prettyplease::unparse(&parse_quote!(
-            /// Auto generated code with `cargo-extern-fn`
+            /// Auto-generated code with `cargo-extern-fn`
             #[cxx::bridge]
             pub mod ffi {
                 #cxx_struct_declarations
