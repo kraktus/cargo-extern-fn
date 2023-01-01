@@ -108,11 +108,9 @@ impl ExternaliseFn {
                     .unwrap_or_default(),
                 extern_fn.sig.ident
             );
-            extern_fn.sig.generics = generics
-                
-                .map_or(extern_fn.sig.generics.clone(), |g1| {
-                    union(g1, extern_fn.sig.generics)
-                });
+            extern_fn.sig.generics = generics.map_or(extern_fn.sig.generics.clone(), |g1| {
+                union(g1, extern_fn.sig.generics)
+            });
             for arg in extern_fn.sig.inputs.iter_mut() {
                 if let Some(normalised_arg) = normalise_receiver_arg(
                     arg,

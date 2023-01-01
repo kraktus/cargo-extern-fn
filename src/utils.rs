@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 
-
 use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
 use syn::parse::Parse;
+use syn::visit_mut;
+use syn::visit_mut::VisitMut;
 use syn::GenericArgument;
 use syn::Pat;
 use syn::PatIdent;
@@ -19,8 +20,6 @@ use syn::TypeParen;
 use syn::TypeReference;
 use syn::TypeSlice;
 use syn::TypeTuple;
-use syn::visit_mut;
-use syn::visit_mut::VisitMut;
 use syn::{
     punctuated::{Pair, Punctuated},
     Attribute, FnArg, GenericParam, Generics, Item, ItemConst, ItemEnum, ItemExternCrate, ItemFn,
@@ -85,70 +84,17 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
     }
 }
 
-pub fn add_suffix(idents_to_add: &HashSet<Ident>, ty: &mut Type, suffix: &str) {
-    match ty {
-        Type::BareFn(TypeBareFn { inputs, output, .. }) => {
-            for input in inputs {
-                add_suffix(idents_to_add, &mut input.ty, suffix)
-            }
-            if let ReturnType::Type(_, return_type) = output {
-                add_suffix(idents_to_add, return_type, suffix)
-            }
-        }
-        Type::Path(path_ty) => {
-            for p in path_ty.path.segments.iter_mut() {
-                if idents_to_add.contains(&p.ident) {
-                    p.ident = format_ident!("{}{suffix}", p.ident);
-                }
-                match p.arguments {
-                    syn::PathArguments::None => (),
-                    syn::PathArguments::AngleBracketed(ref mut generics) => {
-                        for g in generics.args.iter_mut() {
-                            if let GenericArgument::Type(generic_ty) = g {
-                                add_suffix(idents_to_add, generic_ty, suffix)
-                            }
-                        }
-                    }
-                    syn::PathArguments::Parenthesized(ref mut parenthesised) => {
-                        for generic_input in parenthesised.inputs.iter_mut() {
-                            add_suffix(idents_to_add, generic_input, suffix)
-                        }
-                        if let ReturnType::Type(_, ref mut return_type) = parenthesised.output {
-                            add_suffix(idents_to_add, return_type, suffix)
-                        }
-                    }
-                }
-            }
-        }
-        Type::Reference(TypeReference { elem, .. })
-        | Type::Paren(TypeParen { elem, .. })
-        | Type::Group(TypeGroup { elem, .. })
-        | Type::Array(TypeArray { elem, .. })
-        | Type::Slice(TypeSlice { elem, .. }) => add_suffix(idents_to_add, elem, suffix),
-        Type::Tuple(TypeTuple { elems, .. }) => {
-            for elem in elems {
-                add_suffix(idents_to_add, elem, suffix)
-            }
-        }
-        Type::ImplTrait(_)
-        | Type::Infer(_)
-        | Type::Macro(_)
-        | Type::Ptr(_)
-        | Type::TraitObject(_)
-        | Type::Never(_)
-        | Type::Verbatim(_)
-        | _ => (),
-    }
-}
-
 pub struct AddSuffix<'a> {
     suffix: &'a str,
-    idents_to_add: &'a HashSet<Ident>
+    idents_to_add: &'a HashSet<Ident>,
 }
 
 impl<'a> AddSuffix<'a> {
     pub fn new(suffix: &'a str, idents_to_add: &'a HashSet<Ident>) -> Self {
-        Self { suffix, idents_to_add }
+        Self {
+            suffix,
+            idents_to_add,
+        }
     }
 }
 
@@ -384,23 +330,21 @@ mod tests {
 
     #[test]
     fn test_add_suffix_ty() {
-        let mut ty_fn: Type = syn::parse_str("foo::Gen<Bar>").unwrap();
-        let mut ty_visitor = ty_fn.clone();
+        let mut ty_visitor: Type = syn::parse_str("foo::Gen<Bar>").unwrap();
         let idents = [format_ident!("Bar")].into();
         let mut ffi_visitor = AddSuffix::new("Ffi", &idents);
         ffi_visitor.visit_type_mut(&mut ty_visitor);
         let ty_ffi: TypeTest = syn::parse_str("foo::Gen<BarFfi>").unwrap();
-        add_suffix(&idents, &mut ty_fn, "Ffi");
-        assert_eq!(ty_fn, ty_ffi.0);
-        assert_eq!(ty_fn, ty_visitor);
+        assert_eq!(ty_visitor, ty_ffi.0);
     }
 
     #[test]
     fn test_add_suffix_ty_slice() {
-        let mut ty: Type = syn::parse_str("&[Bar]").unwrap();
+        let mut ty_visitor: Type = syn::parse_str("&[Bar]").unwrap();
         let idents = [format_ident!("Bar")].into();
+        let mut ffi_visitor = AddSuffix::new("Ffi", &idents);
+        ffi_visitor.visit_type_mut(&mut ty_visitor);
         let ty_ffi: TypeTest = syn::parse_str("&[BarFfi]").unwrap();
-        add_suffix(&idents, &mut ty, "Ffi");
-        assert_eq!(ty, ty_ffi.0)
+        assert_eq!(ty_visitor, ty_ffi.0);
     }
 }
