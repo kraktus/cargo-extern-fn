@@ -250,7 +250,7 @@ impl CxxFn {
         if self.return_is_opt {
             if let ReturnType::Type(_, ref mut ty) = cxx_item.sig.output {
                 if let Type::Path(ref mut p) = **ty {
-                    p.path.segments[0].ident = syn::parse_str("ResultFfi").unwrap();
+                    p.path.segments[0].ident = format_ident!("ResultFfi");
                 }
             }
         }
@@ -435,7 +435,7 @@ fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
     let x_ident = &x.ident;
     let y_ident = &y.ident;
     // We assume the enum has only unit fields
-    let body = x.variants.iter().map(|v| quote!(<x_ident>::#v => Self::#v));
+    let body = x.variants.iter().map(|v| quote!(<#x_ident>::#v => Self::#v));
 
 
     quote!(impl From<#x_ident> for #y_ident {
@@ -497,6 +497,10 @@ impl Cxx {
         buf
     }
 
+    fn generate_ffi_impl(&self) -> TokenStream {
+        todo!()
+    }
+
     fn generate_raw_and_conversions(pub_struct_or_enum: &[StructOrEnum], buf: &mut TokenStream) {
         for (original, raw_struct) in pub_struct_or_enum
             .iter()
@@ -554,6 +558,8 @@ impl Cxx {
                         #cxx_sig
                     }
             }
+            use ffi::*;
+            type ResultFfi<T> = Result<T, ()>
 
             #ffi_conv
         ));

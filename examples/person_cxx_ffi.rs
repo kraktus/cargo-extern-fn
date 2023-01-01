@@ -10,10 +10,7 @@ pub enum Citizen {
 }
 impl Person {
     pub fn new(age: u8, name: String) -> Person {
-        Self {
-            age: Age(age),
-            name,
-        }
+        Self { age: Age(age), name }
     }
     pub fn is_adult(&self) -> bool {
         self.age.0 >= 18
@@ -22,11 +19,7 @@ impl Person {
         self.age.0 += 1;
     }
     pub fn to_citizen(self) -> Citizen {
-        if self.is_adult() {
-            Citizen::Adult
-        } else {
-            Citizen::Minor
-        }
+        if self.is_adult() { Citizen::Adult } else { Citizen::Minor }
     }
     /// extern_fn:skip
     pub fn name(&self) -> &str {
@@ -60,7 +53,7 @@ impl From<Person> for PersonRaw {
             age: x.age.into(),
             name: x.name.into(),
         }
-        .into()
+            .into()
     }
 }
 impl From<PersonRaw> for Person {
@@ -69,29 +62,76 @@ impl From<PersonRaw> for Person {
             age: x.age.into(),
             name: x.name.into(),
         }
-        .into()
+            .into()
     }
 }
 
-// Auto generated code with `cargo-extern-fn`
-// #[cxx::bridge]
-// pub mod ffi {
-//     pub struct AgeFfi {
-//         pub n0: u8,
-//     }
-//     pub struct PersonFfi {
-//         pub age: AgeFfi,
-//         pub name: String,
-//     }
-//     /// This is a doc comment!
-//     pub enum CitizenFfi {
-//         Adult,
-//         Minor,
-//     }
-//     extern "Rust" {
-//         fn new(age: u8, name: String) -> PersonFfi;
-//         fn is_adult(self: &PersonFfi) -> bool;
-//         fn bday(self: &mut PersonFfi);
-//         fn to_citizen(self: PersonFfi) -> CitizenFfi;
-//     }
-// }
+
+/// Auto generated code with `cargo-extern-fn`
+#[cxx::bridge]
+pub mod ffi {
+    pub struct AgeFfi {
+        pub n0: u8,
+    }
+    pub struct PersonFfi {
+        pub age: AgeFfi,
+        pub name: String,
+    }
+    /// This is a doc comment!
+    pub enum CitizenFfi {
+        Adult,
+        Minor,
+    }
+    extern "Rust" {
+        fn new(age: u8, name: String) -> PersonFfi;
+        fn is_adult(self: &PersonFfi) -> bool;
+        fn bday(self: &mut PersonFfi);
+        fn to_citizen(x: PersonFfi) -> CitizenFfi;
+    }
+}
+use ffi::*;
+impl From<Age> for AgeFfi {
+    fn from(x: Age) -> Self {
+        Self { n0: x.0.into() }.into()
+    }
+}
+impl From<AgeFfi> for Age {
+    fn from(x: AgeFfi) -> Self {
+        Self(x.n0.into()).into()
+    }
+}
+impl From<Person> for PersonFfi {
+    fn from(x: Person) -> Self {
+        Self {
+            age: x.age.into(),
+            name: x.name.into(),
+        }
+            .into()
+    }
+}
+impl From<PersonFfi> for Person {
+    fn from(x: PersonFfi) -> Self {
+        Self {
+            age: x.age.into(),
+            name: x.name.into(),
+        }
+            .into()
+    }
+}
+impl From<Citizen> for CitizenFfi {
+    fn from(x: Citizen) -> Self {
+        match x {
+            <Citizen>::Adult => Self::Adult,
+            <Citizen>::Minor => Self::Minor,
+        }
+    }
+}
+impl From<CitizenFfi> for Citizen {
+    fn from(x: CitizenFfi) -> Self {
+        match x {
+            <CitizenFfi>::Adult => Self::Adult,
+            <CitizenFfi>::Minor => Self::Minor,
+        }
+    }
+}
+
