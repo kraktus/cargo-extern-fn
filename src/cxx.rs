@@ -19,7 +19,7 @@ use syn::{ItemEnum, ItemStruct, Visibility};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
-    attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, method_self_type,
+    attrs, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip, method_self_type,
     normalise_receiver_arg, AddSuffix, SelfType,
 };
 use crate::utils::{call_function_from_sig, is_type};
@@ -202,7 +202,8 @@ struct GatherSignatures {
 #[derive(Debug, Clone)]
 struct CxxFn {
     pub item_fn: ItemFn,
-    ty: Option<Type>,
+    ty: Option<Type>, // set on methods and associated functions
+    is_associated: bool,
     pub return_is_opt: bool, // cxx does not handle `Option`... convert to `Result`
 }
 
@@ -214,6 +215,7 @@ impl CxxFn {
             false
         };
         Self {
+            is_associated: ty.is_some() && !is_method(&item_fn.sig),
             item_fn,
             return_is_opt,
             ty,
@@ -222,6 +224,16 @@ impl CxxFn {
 
     fn as_cxx_sig(&self, idents_to_add: &HashSet<Ident>) -> TokenStream {
         let mut cxx_sig = self.item_fn.sig.clone();
+        if self.is_associated {
+            cxx_sig.ident = format_ident!(
+                "{}{}",
+                self.ty
+                    .as_ref()
+                    .and_then(get_ident_as_function)
+                    .expect("type with ident"),
+                cxx_sig.ident
+            );
+        }
         for arg in cxx_sig.inputs.iter_mut() {
             let ffi_ident = self
                 .ty
@@ -323,7 +335,7 @@ impl GatherSignatures {
     fn handle_item_fn(
         &mut self,
         item_fn: &ItemFn,
-        prefix_opt: Option<Ident>, // only set when handling associated functions
+        is_associated: bool, // only set when handling associated functions
     ) {
         if item_fn.sig.asyncness.is_none()
             && item_fn.sig.abi.is_none()
@@ -331,20 +343,15 @@ impl GatherSignatures {
             // do not handle function with `cfg` attributes for the moment
             && item_fn.attrs.iter().all(|a| !a.path.is_ident("cfg") && !meta_is_extern_fn_skip(a.parse_meta()))
         {
-            let mut extern_fn = item_fn.clone();
-            trace!("handling fn {:?}", extern_fn.sig.ident);
-            if let Some(prefix) = prefix_opt.as_ref() {
-                extern_fn.sig.ident = format_ident!("{}{}", prefix, extern_fn.sig.ident);
-            }
-
+            trace!("handling fn {:?}", item_fn.sig.ident);
             self.cxx_fn_buf
-                .entry(if prefix_opt.is_some() {
-                    None // static method are converted into free functions
+                .entry(if is_associated {
+                    None // associated functions are converted into free functions
                 } else {
                     self.current_impl_ty.clone()
                 })
                 .or_default()
-                .push(CxxFn::new(extern_fn, self.current_impl_ty.clone()));
+                .push(CxxFn::new(item_fn.clone(), self.current_impl_ty.clone()));
         }
     }
 }
@@ -375,19 +382,16 @@ impl<'ast> Visit<'ast> for GatherSignatures {
     }
 
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
-        self.handle_item_fn(
-            item_fn,
-            self.current_impl_ty
-                .clone()
-                .and_then(|ty| get_ident_as_function(&ty)),
-        );
+        self.handle_item_fn(item_fn, false);
         visit::visit_item_fn(self, item_fn);
     }
 
     fn visit_impl_item_method(&mut self, item_method: &'ast ImplItemMethod) {
         let item_fn: ItemFn =
             syn::parse2(item_method.to_token_stream()).expect("from method to bare fn failed");
-        self.handle_item_fn(&item_fn, None);
+        let is_associated = !is_method(&item_fn.sig);
+        self.handle_item_fn(&item_fn, is_associated);
+
         visit::visit_impl_item_method(self, item_method);
     }
 }
@@ -435,8 +439,10 @@ fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
     let x_ident = &x.ident;
     let y_ident = &y.ident;
     // We assume the enum has only unit fields
-    let body = x.variants.iter().map(|v| quote!(<#x_ident>::#v => Self::#v));
-
+    let body = x
+        .variants
+        .iter()
+        .map(|v| quote!(<#x_ident>::#v => Self::#v));
 
     quote!(impl From<#x_ident> for #y_ident {
         fn from(x: #x_ident) -> Self {
@@ -473,7 +479,8 @@ impl Cxx {
 
     fn generate_ffi_conversions(&self) -> TokenStream {
         let mut buf = TokenStream::new();
-        for (original, ffi) in self.all_cxx_struct_or_enum
+        for (original, ffi) in self
+            .all_cxx_struct_or_enum
             .iter()
             .map(|x| x.original_and_ffi(&self.all_cxx_idents))
         {
@@ -484,14 +491,14 @@ impl Cxx {
                     let forth = impl_from_x_to_y(b, a);
                     quote!(#back #forth)
                 }
-                ,
                 (StructOrEnum::E(a), StructOrEnum::E(b)) => {
                     let back = impl_from_x_to_y_enum(a, b);
                     let forth = impl_from_x_to_y_enum(b, a);
                     quote!(#back #forth)
-                },
-                _ => unreachable!("Impossible to have a struct turned into enum or vice-versa")
-            }.to_tokens(&mut buf);
+                }
+                _ => unreachable!("Impossible to have a struct turned into enum or vice-versa"),
+            }
+            .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
         buf
@@ -559,7 +566,7 @@ impl Cxx {
                     }
             }
             use ffi::*;
-            type ResultFfi<T> = Result<T, ()>
+            type ResultFfi<T> = Result<T, ()>;
 
             #ffi_conv
         ));
@@ -668,6 +675,31 @@ mod tests {
 }
 "
         )
+    }
+
+    #[test]
+    fn test_gather_associated_functions() {
+        let parsed_file = syn::parse_str(
+            r#"impl Foo {
+                pub fn new(x: usize) -> Foo {
+                    Self {x}
+                }
+            }
+    "#,
+        )
+        .unwrap();
+        let mut gather_sig = GatherSignatures::new([format_ident!("Foo")].into());
+        gather_sig.visit_file(&parsed_file);
+        let mut cxx_sig = TokenStream::new();
+        for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
+            assert!(ty_opt.is_none());
+            assert_eq!(vec_fn.len(), 1);
+            vec_fn[0]
+                .as_cxx_sig(&HashSet::new())
+                .to_tokens(&mut cxx_sig);
+        }
+
+        assert_eq!(format!("{cxx_sig}"), "fn foo_new (x : usize) -> Foo ;")
     }
 
     #[test]

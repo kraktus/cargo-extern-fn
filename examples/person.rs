@@ -28,6 +28,8 @@ impl Person {
         self.age.0 += 1
     }
 
+    /// extern_fn:skip
+    // by value not supported for the moment
     pub fn to_citizen(self) -> Citizen {
         if self.is_adult() {
             Citizen::Adult
@@ -35,7 +37,7 @@ impl Person {
             Citizen::Minor
         }
     }
-    /// extern_fn:skip
+
     pub fn name(&self) -> &str {
         &self.name
     }
