@@ -126,6 +126,10 @@ impl StructOrEnum {
             StructOrEnum::E(_) => None,
         })
     }
+
+    fn original_and_ffi(&self, idents_to_add: &HashSet<Ident>) -> (Self, Self) {
+        (self.clone(), self.as_ffi(idents_to_add))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -251,6 +255,8 @@ impl CxxFn {
             }
         }
         let self_type_opt = cxx_item.sig.inputs.iter().find_map(method_self_type);
+        // if the function takes by value mut or ref mut, we need to create a mutable clone before calling
+        // the method on the original struct/enum
         let before_call_fn = if let Some(self_type) = self_type_opt.as_ref() {
             let ty_ = self.ty.as_ref().expect("No type defined in method");
             match self_type {
@@ -287,6 +293,8 @@ impl CxxFn {
             call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or(()));
         };
 
+        // if the function takes by value mut or ref mut, we need to apply the differences of state from the original
+        // to the Ffi datastructure
         let after_call_fn = if let Some(SelfType::RefMut) = self_type_opt.as_ref() {
             quote!(*self = Self::from(x);)
         } else if let Some(SelfType::ValueMut) = self_type_opt.as_ref() {
@@ -394,9 +402,9 @@ fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
                 let ident = f.ident.as_ref().expect("named field");
                 let unnamed_ident = Index::from(i);
                 if is_x_unnamed {
-                    quote!(#ident: x.#unnamed_ident)
+                    quote!(#ident: x.#unnamed_ident.into())
                 } else {
-                    quote!(#ident: x.#ident)
+                    quote!(#ident: x.#ident.into())
                 }
             });
             quote!({#(#named_token),*})
@@ -406,10 +414,10 @@ fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
                 .map(Index::from)
                 .map(|i| // hardcode the fact that named fields are of the form nX, for named-struct -> unnamed struct conversions
                     if is_x_unnamed {
-                     quote!(x.#i)
+                     quote!(x.#i.into())
                 } else {
                     let named_ident = format_ident!("n{}", i);
-                     quote!(x.#named_ident)
+                     quote!(x.#named_ident.into())
                 });
             quote!((#(#unnamed_token),*))
         }
@@ -417,7 +425,24 @@ fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
     };
     quote!(impl From<#x_ident> for #y_ident {
         fn from(x: #x_ident) -> Self {
-            Self #body
+            Self #body.into()
+        }
+    })
+}
+
+// enum do not need a `Raw` intermediate, they can be directly moved between the original and Ffi version
+fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
+    let x_ident = &x.ident;
+    let y_ident = &y.ident;
+    // We assume the enum has only unit fields
+    let body = x.variants.iter().map(|v| quote!(<x_ident>::#v => Self::#v));
+
+
+    quote!(impl From<#x_ident> for #y_ident {
+        fn from(x: #x_ident) -> Self {
+                match x {
+                    #(#body),*
+                }
         }
     })
 }
@@ -446,8 +471,37 @@ impl Cxx {
         quote!(#(#cxx_sig)*)
     }
 
+    fn generate_ffi_conversions(&self) -> TokenStream {
+        let mut buf = TokenStream::new();
+        for (original, ffi) in self.all_cxx_struct_or_enum
+            .iter()
+            .map(|x| x.original_and_ffi(&self.all_cxx_idents))
+        {
+            trace!("Generating conversion impl of {}", ffi.ident());
+            match (&original, &ffi) {
+                (StructOrEnum::S(a), StructOrEnum::S(b)) => {
+                    let back = impl_from_x_to_y(a, b);
+                    let forth = impl_from_x_to_y(b, a);
+                    quote!(#back #forth)
+                }
+                ,
+                (StructOrEnum::E(a), StructOrEnum::E(b)) => {
+                    let back = impl_from_x_to_y_enum(a, b);
+                    let forth = impl_from_x_to_y_enum(b, a);
+                    quote!(#back #forth)
+                },
+                _ => unreachable!("Impossible to have a struct turned into enum or vice-versa")
+            }.to_tokens(&mut buf);
+            trace!("Finished conversion impl of {}", ffi.ident());
+        }
+        buf
+    }
+
     fn generate_raw_and_conversions(pub_struct_or_enum: &[StructOrEnum], buf: &mut TokenStream) {
-        for (original, raw_struct) in pub_struct_or_enum.iter().flat_map(|x| x.original_and_raw()) {
+        for (original, raw_struct) in pub_struct_or_enum
+            .iter()
+            .filter_map(|x| x.original_and_raw())
+        {
             raw_struct.to_tokens(buf);
             trace!("Generating conversion impl of {}", raw_struct.ident);
             impl_from_x_to_y(&original, &raw_struct).to_tokens(buf);
@@ -489,7 +543,9 @@ impl Cxx {
             .expect("Unable to read file");
         let cxx_struct_declarations = self.generate_cxx_types();
         let cxx_sig = self.generate_cxx_signatures();
+        let ffi_conv = self.generate_ffi_conversions();
         let parsed_file_formated = prettyplease::unparse(&parse_quote!(
+            /// Auto generated code with `cargo-extern-fn`
             #[cxx::bridge]
             pub mod ffi {
                 #cxx_struct_declarations
@@ -498,9 +554,11 @@ impl Cxx {
                         #cxx_sig
                     }
             }
+
+            #ffi_conv
         ));
         if dry {
-            println!("{parsed_file_formated}")
+            println!("\n{parsed_file_formated}")
         } else {
             file.write_all(parsed_file_formated.as_bytes())
                 .expect("final writing of cxx::bridge failed")
@@ -512,6 +570,7 @@ impl Cxx {
 mod tests {
 
     use crate::utils::TypeTest;
+    use pretty_assertions::assert_eq;
 
     use super::*;
 
@@ -715,12 +774,17 @@ pub struct FooRaw {
 }
 impl From<Foo> for FooRaw {
     fn from(x: Foo) -> Self {
-        Self { n0: x.0, n1: x.1, n2: x.2 }
+        Self {
+            n0: x.0.into(),
+            n1: x.1.into(),
+            n2: x.2.into(),
+        }
+            .into()
     }
 }
 impl From<FooRaw> for Foo {
     fn from(x: FooRaw) -> Self {
-        Self(x.n0, x.n1, x.n2)
+        Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
     }
 }
 "
