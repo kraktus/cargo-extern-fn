@@ -70,3 +70,29 @@ impl From<PersonRaw> for Person {
         }
     }
 }
+
+fn main() {
+    unimplemented!();
+}
+
+#[cxx::bridge]
+pub mod ffi {
+    pub struct AgeFfi {
+        pub n0: u8,
+    }
+    pub struct PersonFfi {
+        pub age: AgeFfi,
+        pub name: String,
+    }
+    /// This is a doc comment!
+    pub enum CitizenFfi {
+        Adult,
+        Minor,
+    }
+    extern "Rust" {
+        fn new(age: u8, name: String) -> Person;
+        fn is_adult(self: &PersonFfi) -> bool;
+        fn bday(self: &mut PersonFfi);
+        fn to_citizen(self: PersonFfi) -> Citizen;
+    }
+}

@@ -20,7 +20,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
     attrs, get_ident, get_ident_as_function, meta_is_extern_fn_skip, method_self_type,
-    normalise_receiver_arg, SelfType,
+    normalise_receiver_arg, AddSuffix, SelfType,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -72,15 +72,18 @@ impl StructOrEnum {
         self.as_x_struct("Raw")
     }
 
-    fn as_ffi(&self) -> StructOrEnum {
-        match &self {
+    fn as_ffi(&self, idents_to_add: &HashSet<Ident>) -> StructOrEnum {
+        let mut ffi = match &self {
             StructOrEnum::S(_x) => Self::S(self.as_x_struct("Ffi").expect("We know it's a struct")),
             StructOrEnum::E(x) => {
                 let mut enum_ffi = x.clone();
                 enum_ffi.ident = format_ident!("{}Ffi", enum_ffi.ident);
                 Self::E(enum_ffi)
             }
-        }
+        };
+        let mut visitor = AddSuffix::new("Ffi", idents_to_add);
+        ffi.visit_mut(&mut visitor);
+        ffi
     }
 
     fn as_x_struct(&self, suffix: &str) -> Option<ItemStruct> {
@@ -423,7 +426,7 @@ impl Cxx {
         let all_ffi = self
             .all_cxx_struct_or_enum
             .iter()
-            .map(|enum_or_struct| enum_or_struct.as_ffi());
+            .map(|enum_or_struct| enum_or_struct.as_ffi(&self.all_cxx_idents));
         trace!("Finished generating FFI struct declarations");
         quote!(#(#all_ffi)*)
     }
