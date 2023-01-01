@@ -462,6 +462,7 @@ fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
         fn from(x: #x_ident) -> Self {
                 match x {
                     #(#body),*
+                    _ => unreachable!("No variant left")
                 }
         }
     })
