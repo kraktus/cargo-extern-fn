@@ -257,8 +257,22 @@ impl CxxFn {
     }
 
     // TokenStream of an ItemFn
-    fn as_cxx_impl(&self) -> TokenStream {
+    fn as_cxx_impl(&self, idents_to_be_ffied: &HashSet<Ident>) -> TokenStream {
         let mut cxx_item = self.item_fn.clone();
+        if self.is_associated {
+            cxx_item.sig.ident = format_ident!(
+                "{}{}",
+                self.ty
+                    .as_ref()
+                    .and_then(get_ident_as_function)
+                    .expect("type with ident"),
+                cxx_item.sig.ident
+            );
+        }
+        // convert all arguments to their Ffi version if needed
+        let mut visitor = AddSuffix::new("Ffi", idents_to_be_ffied);
+        visitor.visit_signature_mut(&mut cxx_item.sig);
+
         if self.return_is_opt {
             if let ReturnType::Type(_, ref mut ty) = cxx_item.sig.output {
                 if let Type::Path(ref mut p) = **ty {
@@ -284,22 +298,22 @@ impl CxxFn {
             let ty_ = self.ty.as_ref().expect("No type defined in method");
             match self_type {
                 SelfType::Value => {
-                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(self.into()))
+                    call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(self.into()))
                 }
                 SelfType::ValueMut => {
-                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(x))
+                    call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(x))
                 }
                 SelfType::Ref => call_function_from_sig(
                     self.ty.as_ref(),
                     &cxx_item.sig,
-                    quote!(<#ty_>::from(self.clone())),
+                    quote!(&<#ty_>::from(self.clone())),
                 ),
                 SelfType::RefMut => {
-                    call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!(&mut x))
+                    call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(&mut x))
                 }
             }
         } else {
-            call_function_from_sig(self.ty.as_ref(), &cxx_item.sig, quote!())
+            call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!())
         };
         if self.return_is_opt {
             call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or(()));
@@ -318,7 +332,7 @@ impl CxxFn {
         cxx_item.block = parse_quote!({#before_call_fn
             let res = #call_fn;
             #after_call_fn
-            res});
+            res.into()});
         quote!(#cxx_item)
     }
 }
@@ -505,7 +519,21 @@ impl Cxx {
     }
 
     fn generate_ffi_impl(&self) -> TokenStream {
-        todo!()
+        let mut buf = TokenStream::new();
+        for (ty_opt, vec_fn) in self.all_cxx_fn.iter() {
+            let fn_impls = vec_fn.iter().map(|f| f.as_cxx_impl(&self.all_cxx_idents));
+
+            if let Some(ty) = ty_opt {
+                let ffi_ident = format_ident!("{}Ffi", get_ident(ty).unwrap());
+                quote!(impl #ffi_ident {
+                    #(#fn_impls)*
+                })
+            } else {
+                quote!(#(#fn_impls)*)
+            }
+            .to_tokens(&mut buf)
+        }
+        buf
     }
 
     fn generate_raw_and_conversions(pub_struct_or_enum: &[StructOrEnum], buf: &mut TokenStream) {
@@ -555,6 +583,7 @@ impl Cxx {
         let cxx_struct_declarations = self.generate_cxx_types();
         let cxx_sig = self.generate_cxx_signatures();
         let ffi_conv = self.generate_ffi_conversions();
+        let ffi_impl = self.generate_ffi_impl();
         let parsed_file_formated = prettyplease::unparse(&parse_quote!(
             /// Auto generated code with `cargo-extern-fn`
             #[cxx::bridge]
@@ -569,6 +598,7 @@ impl Cxx {
             type ResultFfi<T> = Result<T, ()>;
 
             #ffi_conv
+            #ffi_impl
         ));
         if dry {
             println!("\n{parsed_file_formated}")

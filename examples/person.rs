@@ -1,12 +1,15 @@
+#[derive(Clone)]
 pub struct Age(u8);
 
 // this is a comment
+#[derive(Clone)]
 pub struct Person {
     age: Age,
     name: String,
 }
 
 /// This is a doc comment!
+#[derive(Clone)]
 pub enum Citizen {
     Adult,
     Minor,
