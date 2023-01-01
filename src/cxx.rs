@@ -216,7 +216,7 @@ impl CxxFn {
         }
     }
 
-    fn as_cxx_sig(&self) -> TokenStream {
+    fn as_cxx_sig(&self, idents_to_add: &HashSet<Ident>) -> TokenStream {
         let mut cxx_sig = self.item_fn.sig.clone();
         for arg in cxx_sig.inputs.iter_mut() {
             let ffi_ident = self
@@ -235,6 +235,8 @@ impl CxxFn {
                 }
             }
         }
+        let mut visitor = AddSuffix::new("Ffi", idents_to_add);
+        visitor.visit_signature_mut(&mut cxx_sig);
         quote!(#cxx_sig;)
     }
 
@@ -435,7 +437,11 @@ impl Cxx {
         let cxx_sig: Vec<TokenStream> = self
             .all_cxx_fn
             .iter()
-            .flat_map(|(_, vec_cxx_fn)| vec_cxx_fn.iter().map(|cxx_fn| cxx_fn.as_cxx_sig()))
+            .flat_map(|(_, vec_cxx_fn)| {
+                vec_cxx_fn
+                    .iter()
+                    .map(|cxx_fn| cxx_fn.as_cxx_sig(&self.all_cxx_idents))
+            })
             .collect();
         quote!(#(#cxx_sig)*)
     }
@@ -518,11 +524,28 @@ mod tests {
         )
         .unwrap();
         let cxx_fn = CxxFn::new(item_fn, None);
-        let cxx_sig = cxx_fn.as_cxx_sig();
+        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new());
 
         assert_eq!(
             format!("{cxx_sig}"),
             "fn get_ident_as_function (ty : & Type) -> Ident ;"
+        )
+    }
+
+    #[test]
+    fn test_cxx_sig_with_ffi() {
+        let item_fn = syn::parse_str(
+            r#"pub fn add_ffi_to_types(foo: &Foo) -> Vec<Bar> {
+    todo!()
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_sig = cxx_fn.as_cxx_sig(&[format_ident!("Foo"), format_ident!("Bar")].into());
+
+        assert_eq!(
+            format!("{cxx_sig}"),
+            "fn add_ffi_to_types (foo : & FooFfi) -> Vec < BarFfi > ;"
         )
     }
 
@@ -535,7 +558,7 @@ mod tests {
         )
         .unwrap();
         let cxx_fn = CxxFn::new(item_fn, None);
-        let cxx_sig = cxx_fn.as_cxx_sig();
+        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new());
 
         assert_eq!(
             format!("{cxx_sig}"),
