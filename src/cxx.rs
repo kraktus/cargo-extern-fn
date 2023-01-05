@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use std::fs::{File, OpenOptions};
+use std::fs::{DirEntry, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -568,7 +568,12 @@ impl Cxx {
         parsed_file_tokens
     }
 
-    pub fn generate_ffi_bridge_and_impl(self, code_dir: &Path, dry: bool) {
+    pub fn generate_ffi_bridge_and_impl(
+        self,
+        code_dir: &Path,
+        dry: bool,
+        entries: impl Iterator<Item = DirEntry>,
+    ) {
         let mut file = File::open(code_dir.join("lib.rs"))
             .or_else(|_| {
                 OpenOptions::new()

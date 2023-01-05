@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File},
+    fs::{self, DirEntry, File},
     io::Read,
     path::PathBuf,
 };
@@ -54,6 +54,31 @@ struct CommonArgs {
     dry: bool,
 }
 
+impl CommonArgs {
+    fn entries(&self) -> impl Iterator<Item = DirEntry> + '_ {
+        self.dir
+            .read_dir()
+            .expect("read_dir call failed")
+            .filter_map(|entry_res| {
+                entry_res.ok().and_then(|entry| {
+                    (entry.file_type().expect("file_type failed").is_file()
+                        && entry
+                            .path()
+                            .file_name()
+                            .map(|n| n.to_string_lossy())
+                            .map_or(true, |n| {
+                                let file_name = n.to_string();
+                                let extension = file_name.split_once('.').unwrap().1;
+                                extension == "rs"
+                                    && !self.ignore.contains(&file_name)
+                                    && !file_name.contains("ffi")
+                            }))
+                    .then_some(entry)
+                })
+            })
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
     Cbindgen,
@@ -71,7 +96,11 @@ impl Cli {
     fn finish(&self, cxx: Cxx) {
         match &self.cmd {
             Cmd::Cbindgen => (),
-            Cmd::Cxx => cxx.generate_ffi_bridge_and_impl(&self.common.dir, self.common.dry),
+            Cmd::Cxx => cxx.generate_ffi_bridge_and_impl(
+                &self.common.dir,
+                self.common.dry,
+                self.common.entries(),
+            ),
         }
     }
 }
@@ -95,35 +124,19 @@ fn main() {
     let mut cxx = Cxx::default();
 
     debug!("looking at... {}", args.common.dir.display());
-    let entries = args.common.dir.read_dir().expect("read_dir call failed");
-    for entry_res in entries {
-        let entry = entry_res.unwrap();
-        if entry.file_type().expect("file_type failed").is_file()
-            && entry
-                .path()
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .map_or(true, |n| {
-                    let file_name = n.to_string();
-                    let extension = file_name.split_once('.').unwrap().1;
-                    extension == "rs"
-                        && !args.common.ignore.contains(&file_name)
-                        && !file_name.contains("ffi")
-                })
-        {
-            info!("scanning file: {:?}", entry.path());
-            let mut file = File::open(entry.path()).expect("reading file in src/ failed");
-            let mut src = String::new();
-            file.read_to_string(&mut src).expect("Unable to read file");
-            let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-            let parsed_file_tokens = args.handle_file(&mut parsed_file, &mut cxx);
-            trace!("Finished hanlding the file");
-            let parsed_file_formated = prettyplease::unparse(&parse_quote!(#parsed_file_tokens));
-            if args.common.dry {
-                println!("{parsed_file_formated}")
-            } else {
-                fs::write(entry.path(), parsed_file_formated).expect("saving code changes failed");
-            }
+    for entry in args.common.entries() {
+        info!("scanning file: {:?}", entry.path());
+        let mut file = File::open(entry.path()).expect("reading file in src/ failed");
+        let mut src = String::new();
+        file.read_to_string(&mut src).expect("Unable to read file");
+        let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
+        let parsed_file_tokens = args.handle_file(&mut parsed_file, &mut cxx);
+        trace!("Finished hanlding the file");
+        let parsed_file_formated = prettyplease::unparse(&parse_quote!(#parsed_file_tokens));
+        if args.common.dry {
+            println!("{parsed_file_formated}")
+        } else {
+            fs::write(entry.path(), parsed_file_formated).expect("saving code changes failed");
         }
     }
     args.finish(cxx);
