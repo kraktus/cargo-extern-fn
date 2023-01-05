@@ -68,10 +68,6 @@ impl StructOrEnum {
         }
     }
 
-    fn as_raw_struct(&self) -> Option<ItemStruct> {
-        self.as_x_struct("Raw")
-    }
-
     fn as_ffi(&self, idents_to_add: &HashSet<Ident>) -> StructOrEnum {
         let mut ffi = match &self {
             StructOrEnum::S(_x) => Self::S(self.as_x_struct("Ffi").expect("We know it's a struct")),
@@ -120,25 +116,18 @@ impl StructOrEnum {
         }
     }
 
-    fn original_and_raw(&self) -> Option<(ItemStruct, ItemStruct)> {
-        self.as_raw_struct().and_then(|raw| match self {
-            StructOrEnum::S(original) => Some((original.clone(), raw)),
-            StructOrEnum::E(_) => None,
-        })
-    }
-
     fn original_and_ffi(&self, idents_to_add: &HashSet<Ident>) -> (Self, Self) {
         (self.clone(), self.as_ffi(idents_to_add))
     }
 }
 
 #[derive(Debug, Clone, Default)]
-struct CreateRawStruct {
+struct GatherDataStructures {
     pub_struct_or_enum: Vec<StructOrEnum>,
     idents: HashSet<Ident>, // idents of struct/enums. TODO union?
 }
 
-impl CreateRawStruct {
+impl GatherDataStructures {
     fn results(self) -> (Vec<StructOrEnum>, HashSet<Ident>) {
         let Self {
             pub_struct_or_enum,
@@ -148,7 +137,7 @@ impl CreateRawStruct {
     }
 }
 
-impl<'ast> Visit<'ast> for CreateRawStruct {
+impl<'ast> Visit<'ast> for GatherDataStructures {
     fn visit_item_struct(&mut self, struct_: &'ast ItemStruct) {
         if matches!(struct_.vis, Visibility::Public(_)) && struct_.generics.params.is_empty()
         // generics not handled by cxx
@@ -537,39 +526,29 @@ impl Cxx {
         buf
     }
 
-    fn generate_raw_and_conversions(pub_struct_or_enum: &[StructOrEnum], buf: &mut TokenStream) {
-        for (original, raw_struct) in pub_struct_or_enum
-            .iter()
-            .filter_map(|x| x.original_and_raw())
-        {
-            raw_struct.to_tokens(buf);
-            trace!("Generating conversion impl of {}", raw_struct.ident);
-            impl_from_x_to_y(&original, &raw_struct).to_tokens(buf);
-            impl_from_x_to_y(&raw_struct, &original).to_tokens(buf);
-            trace!("Finished conversion impl of {}", raw_struct.ident);
-        }
-    }
-
-    pub fn handle_file(&mut self, parsed_file: &syn::File) -> TokenStream {
+    pub fn handle_file(&mut self, parsed_file: &syn::File) {
         trace!("Starting CreateRawStruct pass");
-        let mut create_raw_struct = CreateRawStruct::default();
-        create_raw_struct.visit_file(parsed_file);
+        let mut gather_ds = GatherDataStructures::default();
+        gather_ds.visit_file(parsed_file);
         trace!("Finished CreateRawStruct pass");
-        let (pub_struct_or_enum, idents) = create_raw_struct.results();
+        let (pub_struct_or_enum, idents) = gather_ds.results();
         trace!("Starting GatherSignatures pass");
         let mut gather_sig = GatherSignatures::new(idents);
         gather_sig.visit_file(parsed_file);
         trace!("Finished GatherSignatures pass");
         self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
         self.all_cxx_idents.extend(gather_sig.allowed_idents);
-        let mut parsed_file_tokens = quote!(#parsed_file);
-        Self::generate_raw_and_conversions(&pub_struct_or_enum, &mut parsed_file_tokens);
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
-        parsed_file_tokens
+    }
+
+    // once all files have been parsed once, add the ffi version and rewrite the impl with them
+    // for each file of the lib
+    pub fn add_ffi_ds(&self) -> TokenStream {
+        todo!()
     }
 
     pub fn generate_ffi_bridge_and_impl(
-        self,
+        &self,
         code_dir: &Path,
         dry: bool,
         entries: impl Iterator<Item = DirEntry>,
@@ -804,62 +783,6 @@ mod tests {
     let res = <bar::Bar>::bday(&mut x);
     *self = Self::from(x);
     res
-}
-"
-        )
-    }
-
-    #[test]
-    fn test_raw_struct_converting_un_named_tuples() {
-        let item_struct: ItemStruct = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
-        let mut create_raw_struct = CreateRawStruct::default();
-        create_raw_struct.visit_item_struct(&item_struct);
-        let (vec, idents) = create_raw_struct.results();
-        let raw_structs = vec.into_iter().flat_map(|x| x.as_raw_struct());
-        assert_eq!(idents, [format_ident!("Foo")].into());
-
-        assert_eq!(
-            prettyplease::unparse(&parse_quote!(#(#raw_structs)*)),
-            "pub struct FooRaw {
-    pub n0: usize,
-    pub n1: u64,
-    pub n2: u8,
-}
-"
-        )
-    }
-
-    #[test]
-    fn test_raw_struct_conversions_with_struc() {
-        let item_struct: ItemStruct = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
-        let mut create_raw_struct = CreateRawStruct::default();
-        create_raw_struct.visit_item_struct(&item_struct);
-        let (raw_vec, _) = create_raw_struct.results();
-        let mut buf = quote!(#item_struct);
-        Cxx::generate_raw_and_conversions(&raw_vec, &mut buf);
-        println!("{buf}");
-        assert_eq!(
-            prettyplease::unparse(&parse_quote!(#buf)),
-            "pub struct Foo(usize, u64, u8);
-pub struct FooRaw {
-    pub n0: usize,
-    pub n1: u64,
-    pub n2: u8,
-}
-impl From<Foo> for FooRaw {
-    fn from(x: Foo) -> Self {
-        Self {
-            n0: x.0.into(),
-            n1: x.1.into(),
-            n2: x.2.into(),
-        }
-            .into()
-    }
-}
-impl From<FooRaw> for Foo {
-    fn from(x: FooRaw) -> Self {
-        Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
-    }
 }
 "
         )

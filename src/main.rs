@@ -5,14 +5,12 @@ use std::{
 };
 
 use crate::cxx::Cxx;
-use cbindgen::Cbindgen;
 use clap::{ArgAction, Args, Parser, Subcommand};
 use env_logger::Builder;
 use log::{debug, info, trace, LevelFilter};
 use proc_macro2::TokenStream;
 use syn::parse_quote;
 
-mod cbindgen;
 mod cxx;
 mod utils;
 
@@ -22,8 +20,6 @@ struct Cli {
     /// automatically set by cargo as first paramater, TODO fix it
     #[arg(default_value = "extern-fn")]
     ghost_value: String,
-    #[command(subcommand)]
-    cmd: Cmd,
     #[command(flatten)]
     common: CommonArgs,
 }
@@ -78,32 +74,6 @@ impl CommonArgs {
             })
     }
 }
-
-#[derive(Subcommand, Debug)]
-enum Cmd {
-    Cbindgen,
-    Cxx,
-}
-
-impl Cli {
-    fn handle_file(&self, file: &mut syn::File, cxx: &mut Cxx) -> TokenStream {
-        match &self.cmd {
-            Cmd::Cbindgen => Cbindgen::handle_file(file),
-            Cmd::Cxx => cxx.handle_file(file),
-        }
-    }
-
-    fn finish(&self, cxx: Cxx) {
-        match &self.cmd {
-            Cmd::Cbindgen => (),
-            Cmd::Cxx => cxx.generate_ffi_bridge_and_impl(
-                &self.common.dir,
-                self.common.dry,
-                self.common.entries(),
-            ),
-        }
-    }
-}
 fn main() {
     let args = Cli::parse();
     let mut builder = Builder::new();
@@ -130,8 +100,18 @@ fn main() {
         let mut src = String::new();
         file.read_to_string(&mut src).expect("Unable to read file");
         let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-        let parsed_file_tokens = args.handle_file(&mut parsed_file, &mut cxx);
-        trace!("Finished hanlding the file");
+        let parsed_file_tokens = cxx.handle_file(&mut parsed_file);
+        trace!("Finished handling the file");
+    }
+    cxx.generate_ffi_bridge_and_impl(&args.common.dir, args.common.dry, args.common.entries());
+    for entry in args.common.entries() {
+        info!("scanning file 2nd time: {:?}", entry.path());
+        let mut file = File::open(entry.path()).expect("reading file in src/ failed");
+        let mut src = String::new();
+        file.read_to_string(&mut src).expect("Unable to read file");
+        let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
+        let parsed_file_tokens = cxx.add_ffi_ds();
+        trace!("Finished handling the file 2nd time");
         let parsed_file_formated = prettyplease::unparse(&parse_quote!(#parsed_file_tokens));
         if args.common.dry {
             println!("{parsed_file_formated}")
@@ -139,5 +119,4 @@ fn main() {
             fs::write(entry.path(), parsed_file_formated).expect("saving code changes failed");
         }
     }
-    args.finish(cxx);
 }
