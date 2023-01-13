@@ -672,7 +672,7 @@ mod tests {
 
         assert_eq!(
             format!("{cxx_impl}"),
-            "pub fn foo (u : usize) -> usize { let res = foo (u) ; res }"
+            "pub fn foo (u : usize) -> usize { let res = foo (u) ; res . into () }"
         )
     }
 
@@ -691,8 +691,8 @@ mod tests {
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn is_adult(&self) -> bool {
-    let res = <bar::Bar>::is_adult(<bar::Bar>::from(self.clone()));
-    res
+    let res = <bar::Bar>::is_adult(&<bar::Bar>::from(self.clone()));
+    res.into()
 }
 "
         )
@@ -739,7 +739,7 @@ mod tests {
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn name(self) -> [char; 5] {
     let res = <bar::Bar>::name(self.into());
-    res
+    res.into()
 }
 "
         )
@@ -764,7 +764,7 @@ mod tests {
     let mut x = <bar::Bar>::from(self);
     let res = <bar::Bar>::bday_value(x);
     let res = Self::from(x);
-    res
+    res.into()
 }
 "
         )
@@ -788,7 +788,7 @@ mod tests {
     let mut x = <bar::Bar>::from(self.clone());
     let res = <bar::Bar>::bday(&mut x);
     *self = Self::from(x);
-    res
+    res.into()
 }
 "
         )
