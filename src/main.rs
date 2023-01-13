@@ -1,6 +1,6 @@
 use std::{
     fs::{self, DirEntry, File},
-    io::Read,
+    io::{Read, Write},
     path::PathBuf,
 };
 
@@ -94,29 +94,39 @@ fn main() {
     let mut cxx = Cxx::default();
 
     debug!("looking at... {}", args.common.dir.display());
+    debug!("Beginning scanning visit");
     for entry in args.common.entries() {
         info!("scanning file: {:?}", entry.path());
         let mut file = File::open(entry.path()).expect("reading file in src/ failed");
         let mut src = String::new();
         file.read_to_string(&mut src).expect("Unable to read file");
-        let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-        let parsed_file_tokens = cxx.handle_file(&mut parsed_file);
+        let parsed_file = syn::parse_file(&src).expect("Unable to parse file");
+        cxx.gather_data_struct_and_sign(&parsed_file);
         trace!("Finished handling the file");
     }
+    debug!("Finished scanning visit");
+
     cxx.generate_ffi_bridge_and_impl(&args.common.dir, args.common.dry, args.common.entries());
+    debug!("Beginning writing visit");
     for entry in args.common.entries() {
         info!("scanning file 2nd time: {:?}", entry.path());
-        let mut file = File::open(entry.path()).expect("reading file in src/ failed");
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .open(entry.path())
+            .expect("2 reading file in src/ failed");
         let mut src = String::new();
         file.read_to_string(&mut src).expect("Unable to read file");
-        let mut parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-        let parsed_file_tokens = cxx.add_ffi_ds();
+        let parsed_file = syn::parse_file(&src).expect("Unable to parse file");
+        let ffi_conversion = cxx.ffi_conversion(&parsed_file);
         trace!("Finished handling the file 2nd time");
-        let parsed_file_formated = prettyplease::unparse(&parse_quote!(#parsed_file_tokens));
+        let ffi_conversion_formated = prettyplease::unparse(&parse_quote!(#ffi_conversion));
         if args.common.dry {
-            println!("{parsed_file_formated}")
+            println!("{src}");
+            println!("{ffi_conversion_formated}")
         } else {
-            fs::write(entry.path(), parsed_file_formated).expect("saving code changes failed");
+            file.write_all(ffi_conversion_formated.as_bytes())
+                .expect("appening ffi conversion failed");
         }
     }
+    debug!("Finished writing visit");
 }

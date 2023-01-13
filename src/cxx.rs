@@ -437,7 +437,6 @@ fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
     })
 }
 
-// enum do not need a `Raw` intermediate, they can be directly moved between the original and Ffi version
 fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
     let x_ident = &x.ident;
     let y_ident = &y.ident;
@@ -481,10 +480,9 @@ impl Cxx {
         quote!(#(#cxx_sig)*)
     }
 
-    fn generate_ffi_conversions(&self) -> TokenStream {
+    fn generate_ffi_conversions(&self, struct_or_enum: Vec<StructOrEnum>) -> TokenStream {
         let mut buf = TokenStream::new();
-        for (original, ffi) in self
-            .all_cxx_struct_or_enum
+        for (original, ffi) in struct_or_enum
             .iter()
             .map(|x| x.original_and_ffi(&self.all_cxx_idents))
         {
@@ -505,7 +503,10 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
-        buf
+        quote!(mod ffi_conversion {
+            use crate::ffi::*;
+            #buf
+        })
     }
 
     fn generate_ffi_impl(&self) -> TokenStream {
@@ -526,11 +527,14 @@ impl Cxx {
         buf
     }
 
-    pub fn handle_file(&mut self, parsed_file: &syn::File) {
-        trace!("Starting CreateRawStruct pass");
+    // Scan a source-code file to get Idents of data_struct (enum/struct) and function signatures
+    // (method or free functions)
+    // to be added to the bridge and turned into Ffi data_struct
+    pub fn gather_data_struct_and_sign(&mut self, parsed_file: &syn::File) {
+        trace!("Starting GatherDataStructures pass");
         let mut gather_ds = GatherDataStructures::default();
         gather_ds.visit_file(parsed_file);
-        trace!("Finished CreateRawStruct pass");
+        trace!("Finished GatherDataStructures pass");
         let (pub_struct_or_enum, idents) = gather_ds.results();
         trace!("Starting GatherSignatures pass");
         let mut gather_sig = GatherSignatures::new(idents);
@@ -541,10 +545,14 @@ impl Cxx {
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
     }
 
-    // once all files have been parsed once, add the ffi version and rewrite the impl with them
-    // for each file of the lib
-    pub fn add_ffi_ds(&self) -> TokenStream {
-        todo!()
+    // once all files have been parsed once, add the conversion between
+    // the ffi data_struct and original struct
+    pub fn ffi_conversion(&self, parsed_file: &syn::File) -> TokenStream {
+        // need to get the idents declared in this file
+        let mut gather_ds = GatherDataStructures::default();
+        gather_ds.visit_file(parsed_file);
+        let (struct_or_enum, _) = gather_ds.results();
+        self.generate_ffi_conversions(struct_or_enum)
     }
 
     pub fn generate_ffi_bridge_and_impl(
@@ -567,7 +575,6 @@ impl Cxx {
             .expect("Unable to read file");
         let cxx_struct_declarations = self.generate_cxx_types();
         let cxx_sig = self.generate_cxx_signatures();
-        let ffi_conv = self.generate_ffi_conversions();
         let ffi_impl = self.generate_ffi_impl();
         let parsed_file_formated = prettyplease::unparse(&parse_quote!(
             /// Auto-generated code with `cargo-extern-fn`
@@ -582,7 +589,6 @@ impl Cxx {
             use ffi::*;
             type ResultFfi<T> = Result<T, ()>;
 
-            #ffi_conv
             #ffi_impl
         ));
         if dry {
