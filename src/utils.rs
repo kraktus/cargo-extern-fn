@@ -7,19 +7,13 @@ use quote::ToTokens;
 use syn::parse::Parse;
 use syn::visit_mut;
 use syn::visit_mut::VisitMut;
-use syn::GenericArgument;
+
 use syn::Pat;
 use syn::PatIdent;
 use syn::PatType;
-use syn::ReturnType;
+
 use syn::Signature;
-use syn::TypeArray;
-use syn::TypeBareFn;
-use syn::TypeGroup;
-use syn::TypeParen;
-use syn::TypeReference;
-use syn::TypeSlice;
-use syn::TypeTuple;
+
 use syn::{
     punctuated::{Pair, Punctuated},
     Attribute, FnArg, GenericParam, Generics, Item, ItemConst, ItemEnum, ItemExternCrate, ItemFn,

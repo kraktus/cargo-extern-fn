@@ -5,10 +5,10 @@ use std::{
 };
 
 use crate::cxx::Cxx;
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser};
 use env_logger::Builder;
 use log::{debug, info, trace, LevelFilter};
-use proc_macro2::TokenStream;
+
 use syn::parse_quote;
 
 mod cxx;
