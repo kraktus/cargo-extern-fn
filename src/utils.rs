@@ -4,7 +4,10 @@ use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
+use syn::ReturnType;
 use syn::parse::Parse;
+use syn::visit;
+use syn::visit::Visit;
 use syn::visit_mut;
 use syn::visit_mut::VisitMut;
 
@@ -98,6 +101,21 @@ impl VisitMut for AddSuffix<'_> {
             *i = format_ident!("{i}{}", self.suffix);
         }
         visit_mut::visit_ident_mut(self, i);
+    }
+}
+
+pub fn return_contains_ref(return_ty: &ReturnType) -> bool {
+    let mut contains_ref = ContainsRef::default();
+    contains_ref.visit_return_type(return_ty);
+    contains_ref.0
+}
+
+#[derive(Default)]
+struct ContainsRef(bool);
+
+impl<'ast> visit::Visit<'ast> for ContainsRef {
+    fn visit_type_reference(&mut self, _: &'ast syn::TypeReference) {
+        self.0 = true;
     }
 }
 

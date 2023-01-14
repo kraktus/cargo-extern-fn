@@ -20,7 +20,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
     attrs, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip, method_self_type,
-    normalise_receiver_arg, AddSuffix, SelfType,
+    normalise_receiver_arg, AddSuffix, SelfType, return_contains_ref,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -269,6 +269,14 @@ impl CxxFn {
                 }
             }
         }
+
+        // if the function returns a reference, bail out and keep the original function body
+        // which is usually just reading a field
+        if return_contains_ref(&cxx_item.sig.output) {
+            return quote!(#cxx_item)
+        }
+
+
         let self_type_opt = cxx_item.sig.inputs.iter().find_map(method_self_type);
         // if the function takes by value mut or ref mut, we need to create a mutable clone before calling
         // the method on the original struct/enum
@@ -503,7 +511,9 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
-        quote!(mod ffi_conversion {
+        quote!(
+            /// Auto-generated code with `cargo-extern-fn`
+            mod ffi_conversion {
             use crate::ffi::*;
             #buf
         })
@@ -673,6 +683,26 @@ mod tests {
         assert_eq!(
             format!("{cxx_impl}"),
             "pub fn foo (u : usize) -> usize { let res = foo (u) ; res . into () }"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl_return_ref() {
+        let item_fn = syn::parse_str(
+            r#"pub fn foo(p: Person) -> &str {
+    p.name
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_impl = cxx_fn.as_cxx_impl(&[format_ident!("Person")].into());
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn foo(p: PersonFfi) -> &str {
+    p.name
+}
+"
         )
     }
 
