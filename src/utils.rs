@@ -4,12 +4,12 @@ use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
-use syn::ReturnType;
 use syn::parse::Parse;
 use syn::visit;
 use syn::visit::Visit;
 use syn::visit_mut;
 use syn::visit_mut::VisitMut;
+use syn::ReturnType;
 
 use syn::Pat;
 use syn::PatIdent;

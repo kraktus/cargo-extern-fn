@@ -20,7 +20,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
     attrs, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip, method_self_type,
-    normalise_receiver_arg, AddSuffix, SelfType, return_contains_ref,
+    normalise_receiver_arg, return_contains_ref, AddSuffix, SelfType,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -273,9 +273,8 @@ impl CxxFn {
         // if the function returns a reference, bail out and keep the original function body
         // which is usually just reading a field
         if return_contains_ref(&cxx_item.sig.output) {
-            return quote!(#cxx_item)
+            return quote!(#cxx_item);
         }
-
 
         let self_type_opt = cxx_item.sig.inputs.iter().find_map(method_self_type);
         // if the function takes by value mut or ref mut, we need to create a mutable clone before calling
@@ -617,6 +616,36 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn test_ffi_struct_conversions_with_struc() {
+        let file: syn::File = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
+        let cxx = Cxx::default();
+        let conv = cxx.ffi_conversion(&file);
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#conv)),
+            "/// Auto-generated code with `cargo-extern-fn`
+mod ffi_conversion {
+    use crate::ffi::*;
+    impl From<Foo> for FooFfi {
+        fn from(x: Foo) -> Self {
+            Self {
+                n0: x.0.into(),
+                n1: x.1.into(),
+                n2: x.2.into(),
+            }
+                .into()
+        }
+    }
+    impl From<FooFfi> for Foo {
+        fn from(x: FooFfi) -> Self {
+            Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
+        }
+    }
+}
+"
+        )
+    }
 
     #[test]
     fn test_cxx_sig() {

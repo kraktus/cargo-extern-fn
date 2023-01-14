@@ -111,6 +111,7 @@ fn main() {
     for entry in args.common.entries() {
         info!("scanning file 2nd time: {:?}", entry.path());
         let mut file = fs::OpenOptions::new()
+            .read(true)
             .append(true)
             .open(entry.path())
             .expect("2 reading file in src/ failed");
