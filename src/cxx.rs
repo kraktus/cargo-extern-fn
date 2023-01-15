@@ -457,9 +457,8 @@ fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
     let y_ident = &y.ident;
     // We assume the enum has only unit fields
     let body = x.variants.iter().map(|v| {
-        let mut variant_wo_discriminant = v.clone();
-        variant_wo_discriminant.discriminant = None;
-        quote!(<#x_ident>::#variant_wo_discriminant => Self::#variant_wo_discriminant)
+        let variant_ident = &v.ident;
+        quote!(<#x_ident>::#variant_ident => Self::#variant_ident)
     });
 
     quote!(impl From<#x_ident> for #y_ident {
@@ -698,7 +697,10 @@ mod ffi_conversion {
     #[test]
     fn test_ffi_enum_conversion_with_discriminant() {
         let file: syn::File =
-            syn::parse_str(r#"pub enum Citizen { Adult = 12, Minor = 123}"#).unwrap();
+            syn::parse_str(r#"pub enum Citizen {
+                /// Nice doc comment 
+                Adult = 12, 
+                Minor = 123}"#).unwrap();
         let cxx = Cxx::default();
         let conv = cxx.ffi_conversion(&file);
         assert_eq!(

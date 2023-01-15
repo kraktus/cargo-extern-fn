@@ -120,6 +120,7 @@ fn main() {
         let parsed_file = syn::parse_file(&src).expect("Unable to parse file");
         let ffi_conversion = cxx.ffi_conversion(&parsed_file);
         trace!("Finished handling the file 2nd time");
+        trace!("Conversion raw ts {}", format!("{ffi_conversion}"));
         let ffi_conversion_formated = prettyplease::unparse(&parse_quote!(#ffi_conversion));
         if args.common.dry {
             println!("{src}");
