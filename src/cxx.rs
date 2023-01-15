@@ -443,7 +443,7 @@ fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
                 });
             quote!((#(#unnamed_token),*))
         }
-        Fields::Unit => unimplemented!("TBD"),
+        Fields::Unit => TokenStream::new(),
     };
     quote!(impl From<#x_ident> for #y_ident {
         fn from(x: #x_ident) -> Self {
@@ -630,7 +630,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ffi_struct_conversions_with_struc() {
+    fn test_ffi_struct_conversions() {
         let file: syn::File = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
         let cxx = Cxx::default();
         let conv = cxx.ffi_conversion(&file);
@@ -653,6 +653,32 @@ mod ffi_conversion {
     impl From<FooFfi> for Foo {
         fn from(x: FooFfi) -> Self {
             Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
+        }
+    }
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_ffi_unit_struct_conversions() {
+        let file: syn::File = syn::parse_str(r#"pub struct Foo;"#).unwrap();
+        let cxx = Cxx::default();
+        let conv = cxx.ffi_conversion(&file);
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#conv)),
+            "/// Auto-generated code with `cargo-extern-fn`
+mod ffi_conversion {
+    use super::*;
+    use crate::ffi::*;
+    impl From<Foo> for FooFfi {
+        fn from(x: Foo) -> Self {
+            Self.into()
+        }
+    }
+    impl From<FooFfi> for Foo {
+        fn from(x: FooFfi) -> Self {
+            Self.into()
         }
     }
 }
@@ -733,7 +759,7 @@ mod ffi_conversion {
     }
 
     #[test]
-    fn test_ffi_struct_conversions_with_2struc() {
+    fn test_ffi_conversions_with_2structs() {
         let file: syn::File =
             syn::parse_str(r#"pub struct Foo(usize, u64, u8); pub struct Bar {x: usize, y: u8}"#)
                 .unwrap();
