@@ -510,12 +510,18 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
-        quote!(
-            /// Auto-generated code with `cargo-extern-fn`
-            mod ffi_conversion {
-            use crate::ffi::*;
-            #buf
-        })
+        // only add the `ffi_conversion` module if there is something to include in it 
+        if !buf.is_empty() {
+            quote!(
+                /// Auto-generated code with `cargo-extern-fn`
+                mod ffi_conversion {
+                use super::*;
+                use crate::ffi::*;
+                #buf
+            })
+        } else {
+            TokenStream::new()
+        }
     }
 
     fn generate_ffi_impl(&self) -> TokenStream {
@@ -626,6 +632,7 @@ mod tests {
             prettyplease::unparse(&parse_quote!(#conv)),
             "/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
+    use super::*;
     use crate::ffi::*;
     impl From<Foo> for FooFfi {
         fn from(x: Foo) -> Self {
@@ -648,6 +655,40 @@ mod ffi_conversion {
     }
 
     #[test]
+    fn test_ffi_enum_conversion() {
+        let file: syn::File = syn::parse_str(r#"pub enum Citizen { Adult, Minor}"#).unwrap();
+        let cxx = Cxx::default();
+        let conv = cxx.ffi_conversion(&file);
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#conv)),
+            r#"/// Auto-generated code with `cargo-extern-fn`
+mod ffi_conversion {
+    use super::*;
+    use crate::ffi::*;
+    impl From<Citizen> for CitizenFfi {
+        fn from(x: Citizen) -> Self {
+            match x {
+                <Citizen>::Adult => Self::Adult,
+                <Citizen>::Minor => Self::Minor,
+                _ => unreachable!("No variant left"),
+            }
+        }
+    }
+    impl From<CitizenFfi> for Citizen {
+        fn from(x: CitizenFfi) -> Self {
+            match x {
+                <CitizenFfi>::Adult => Self::Adult,
+                <CitizenFfi>::Minor => Self::Minor,
+                _ => unreachable!("No variant left"),
+            }
+        }
+    }
+}
+"#
+        )
+    }
+
+    #[test]
     fn test_ffi_struct_conversions_with_2struc() {
         let file: syn::File =
             syn::parse_str(r#"pub struct Foo(usize, u64, u8); pub struct Bar {x: usize, y: u8}"#)
@@ -658,6 +699,7 @@ mod ffi_conversion {
             prettyplease::unparse(&parse_quote!(#conv)),
             "/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
+    use super::*;
     use crate::ffi::*;
     impl From<Foo> for FooFfi {
         fn from(x: Foo) -> Self {
