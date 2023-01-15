@@ -584,7 +584,6 @@ impl Cxx {
         &self,
         code_dir: &Path,
         dry: bool,
-        _entries: impl Iterator<Item = DirEntry>,
     ) {
         let mut file = File::open(code_dir.join("lib.rs"))
             .or_else(|_| {

@@ -106,7 +106,7 @@ fn main() {
     }
     debug!("Finished scanning visit");
 
-    cxx.generate_ffi_bridge_and_impl(&args.common.dir, args.common.dry, args.common.entries());
+    cxx.generate_ffi_bridge_and_impl(&args.common.dir, args.common.dry);
     debug!("Beginning writing visit");
     for entry in args.common.entries() {
         info!("scanning file 2nd time: {:?}", entry.path());
