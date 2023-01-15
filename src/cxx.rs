@@ -456,7 +456,7 @@ fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
     quote!(impl From<#x_ident> for #y_ident {
         fn from(x: #x_ident) -> Self {
                 match x {
-                    #(#body),*
+                    #(#body),*,
                     _ => unreachable!("No variant left")
                 }
         }
@@ -647,10 +647,11 @@ mod ffi_conversion {
         )
     }
 
-
     #[test]
     fn test_ffi_struct_conversions_with_2struc() {
-        let file: syn::File = syn::parse_str(r#"pub struct Foo(usize, u64, u8); pub struct Bar {x: usize, y: u8}"#).unwrap();
+        let file: syn::File =
+            syn::parse_str(r#"pub struct Foo(usize, u64, u8); pub struct Bar {x: usize, y: u8}"#)
+                .unwrap();
         let cxx = Cxx::default();
         let conv = cxx.ffi_conversion(&file);
         assert_eq!(
