@@ -46,6 +46,10 @@ impl Person {
     }
 }
 
+pub fn foo(u: usize) -> u8 {
+    u.try_into().unwrap()
+}
+
 fn main() {
     let p = Person::new(45, "john".to_string());
     println!("{}", p.name())

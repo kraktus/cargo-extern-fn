@@ -211,18 +211,28 @@ impl CxxFn {
         }
     }
 
-    fn as_cxx_sig(&self, idents_to_add: &HashSet<Ident>) -> TokenStream {
-        let mut cxx_sig = self.item_fn.sig.clone();
+    fn cxx_ident(&self) -> Ident {
         if self.is_associated {
-            cxx_sig.ident = format_ident!(
+            format_ident!(
                 "{}{}",
                 self.ty
                     .as_ref()
                     .and_then(get_ident_as_function)
                     .expect("type with ident"),
-                cxx_sig.ident
-            );
+                self.item_fn.sig.ident
+            )
+        } else if self.ty.is_none() {
+            // add a suffix to disambiguate free functions
+            // TODO find better way if possible
+            format_ident!("{}_ffi", self.item_fn.sig.ident)
+        } else {
+            self.item_fn.sig.ident.clone()
         }
+    }
+
+    fn as_cxx_sig(&self, idents_to_add: &HashSet<Ident>) -> TokenStream {
+        let mut cxx_sig = self.item_fn.sig.clone();
+        cxx_sig.ident = self.cxx_ident();
         for arg in cxx_sig.inputs.iter_mut() {
             let ffi_ident = self
                 .ty
@@ -248,16 +258,7 @@ impl CxxFn {
     // TokenStream of an ItemFn
     fn as_cxx_impl(&self, idents_to_be_ffied: &HashSet<Ident>) -> TokenStream {
         let mut cxx_item = self.item_fn.clone();
-        if self.is_associated {
-            cxx_item.sig.ident = format_ident!(
-                "{}{}",
-                self.ty
-                    .as_ref()
-                    .and_then(get_ident_as_function)
-                    .expect("type with ident"),
-                cxx_item.sig.ident
-            );
-        }
+        cxx_item.sig.ident = self.cxx_ident();
         // convert all arguments to their Ffi version if needed
         let mut visitor = AddSuffix::new("Ffi", idents_to_be_ffied);
         visitor.visit_signature_mut(&mut cxx_item.sig);
@@ -510,7 +511,7 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
-        // only add the `ffi_conversion` module if there is something to include in it 
+        // only add the `ffi_conversion` module if there is something to include in it
         if !buf.is_empty() {
             quote!(
                 /// Auto-generated code with `cargo-extern-fn`
@@ -752,7 +753,7 @@ mod ffi_conversion {
 
         assert_eq!(
             format!("{cxx_sig}"),
-            "fn get_ident_as_function (ty : & Type) -> Ident ;"
+            "fn get_ident_as_function_ffi (ty : & Type) -> Ident ;"
         )
     }
 
@@ -769,7 +770,7 @@ mod ffi_conversion {
 
         assert_eq!(
             format!("{cxx_sig}"),
-            "fn add_ffi_to_types (foo : & FooFfi) -> Vec < BarFfi > ;"
+            "fn add_ffi_to_types_ffi (foo : & FooFfi) -> Vec < BarFfi > ;"
         )
     }
 
@@ -786,7 +787,7 @@ mod ffi_conversion {
 
         assert_eq!(
             format!("{cxx_sig}"),
-            "fn get_ident_as_function (ty : & Type) -> Result < Ident > ;"
+            "fn get_ident_as_function_ffi (ty : & Type) -> Result < Ident > ;"
         )
     }
 
@@ -803,7 +804,7 @@ mod ffi_conversion {
 
         assert_eq!(
             format!("{cxx_impl}"),
-            "pub fn foo (u : usize) -> usize { let res = foo (u) ; res . into () }"
+            "pub fn foo_ffi (u : usize) -> usize { let res = foo (u) ; res . into () }"
         )
     }
 
@@ -820,7 +821,7 @@ mod ffi_conversion {
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
-            "pub fn foo(p: PersonFfi) -> &str {
+            "pub fn foo_ffi(p: PersonFfi) -> &str {
     p.name
 }
 "
