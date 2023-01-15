@@ -360,6 +360,7 @@ impl GatherSignatures {
             && matches!(item_fn.vis, Visibility::Public(_))
             // do not handle function with `cfg` attributes for the moment
             && item_fn.attrs.iter().all(|a| !a.path.is_ident("cfg") && !meta_is_extern_fn_skip(a.parse_meta()))
+            && item_fn.sig.generics.params.is_empty()
         {
             trace!("handling fn {:?}", item_fn.sig.ident);
             self.cxx_fn_buf
@@ -909,6 +910,31 @@ mod ffi_conversion {
         .unwrap();
         // no ident since the struct is not public
         let mut gather_sig = GatherSignatures::new(HashSet::new());
+        gather_sig.visit_file(&parsed_file);
+        let mut cxx_sig = TokenStream::new();
+        for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
+            assert!(ty_opt.is_none());
+            assert_eq!(vec_fn.len(), 1);
+            vec_fn[0]
+                .as_cxx_sig(&HashSet::new())
+                .to_tokens(&mut cxx_sig);
+        }
+
+        assert_eq!(format!("{cxx_sig}"), "")
+    }
+
+    #[test]
+    fn test_not_gather_generic_fn() {
+        let parsed_file = syn::parse_str(
+            r#"impl Foo {
+                pub fn new<T: Into<usize>>(x: T) -> Foo {
+                    Self {x: x.into()}
+                }
+            }
+    "#,
+        )
+        .unwrap();
+        let mut gather_sig = GatherSignatures::new([format_ident!("Foo")].into());
         gather_sig.visit_file(&parsed_file);
         let mut cxx_sig = TokenStream::new();
         for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
