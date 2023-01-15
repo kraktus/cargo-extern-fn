@@ -580,12 +580,11 @@ impl Cxx {
         self.generate_ffi_conversions(struct_or_enum)
     }
 
-    pub fn generate_ffi_bridge_and_impl(
-        &self,
-        code_dir: &Path,
-        dry: bool,
-    ) {
-        let mut file = File::open(code_dir.join("lib.rs"))
+    pub fn generate_ffi_bridge_and_impl(&self, code_dir: &Path, dry: bool) {
+        let mut file = OpenOptions::new()
+            .append(true)
+            .read(true)
+            .open(code_dir.join("lib.rs"))
             .or_else(|_| {
                 OpenOptions::new()
                     .create(true)
@@ -619,7 +618,7 @@ impl Cxx {
             println!("\n{parsed_file_formated}")
         } else {
             file.write_all(parsed_file_formated.as_bytes())
-                .expect("final writing of cxx::bridge failed")
+                .expect("final writing of cxx::bridge failed");
         }
     }
 }
