@@ -12,7 +12,7 @@ use syn::visit::{self, Visit};
 use syn::visit_mut::VisitMut;
 use syn::{
     parse_quote, Fields, FieldsNamed, Ident, ImplItemMethod, Index, Item, ItemFn, ItemImpl,
-    ReturnType, Token, Type,
+    ReturnType, Signature, Token, Type,
 };
 use syn::{ItemEnum, ItemStruct, Visibility};
 
@@ -230,7 +230,7 @@ impl CxxFn {
         }
     }
 
-    fn as_cxx_sig(&self, idents_to_add: &HashSet<Ident>) -> TokenStream {
+    fn as_cxx_sig(&self, idents_to_be_ffied: &HashSet<Ident>) -> Signature {
         trace!(
             "Generating cxx sig of {}::{}",
             self.ty
@@ -242,7 +242,24 @@ impl CxxFn {
             self.item_fn.sig.ident
         );
         let mut cxx_sig = self.item_fn.sig.clone();
+        // const functions not supported on the bridge
+        cxx_sig.constness = None;
         cxx_sig.ident = self.cxx_ident();
+        if self.return_is_opt {
+            if let ReturnType::Type(_, ref mut ty) = cxx_sig.output {
+                if let Type::Path(ref mut p) = **ty {
+                    p.path.segments[0].ident = syn::parse_str("Result").unwrap();
+                }
+            }
+        }
+        let mut visitor = AddSuffix::new("Ffi", idents_to_be_ffied);
+        visitor.visit_signature_mut(&mut cxx_sig);
+        cxx_sig
+    }
+
+    // same as cxx_sig but with the additional `&self` -> `self: &Foo` trick
+    fn as_cxx_bridge_sig(&self, idents_to_be_ffied: &HashSet<Ident>) -> TokenStream {
+        let mut cxx_sig = self.as_cxx_sig(idents_to_be_ffied);
         for arg in cxx_sig.inputs.iter_mut() {
             let ffi_ident = self
                 .ty
@@ -253,33 +270,13 @@ impl CxxFn {
                 *arg = normalised_arg;
             }
         }
-        if self.return_is_opt {
-            if let ReturnType::Type(_, ref mut ty) = cxx_sig.output {
-                if let Type::Path(ref mut p) = **ty {
-                    p.path.segments[0].ident = syn::parse_str("Result").unwrap();
-                }
-            }
-        }
-        let mut visitor = AddSuffix::new("Ffi", idents_to_add);
-        visitor.visit_signature_mut(&mut cxx_sig);
         quote!(#cxx_sig;)
     }
 
     // TokenStream of an ItemFn
     fn as_cxx_impl(&self, idents_to_be_ffied: &HashSet<Ident>) -> TokenStream {
         let mut cxx_item = self.item_fn.clone();
-        cxx_item.sig.ident = self.cxx_ident();
-        // convert all arguments to their Ffi version if needed
-        let mut visitor = AddSuffix::new("Ffi", idents_to_be_ffied);
-        visitor.visit_signature_mut(&mut cxx_item.sig);
-
-        if self.return_is_opt {
-            if let ReturnType::Type(_, ref mut ty) = cxx_item.sig.output {
-                if let Type::Path(ref mut p) = **ty {
-                    p.path.segments[0].ident = format_ident!("ResultFfi");
-                }
-            }
-        }
+        cxx_item.sig = self.as_cxx_sig(idents_to_be_ffied);
 
         // if the function returns a reference, bail out and keep the original function body
         // which is usually just reading a field
@@ -491,7 +488,7 @@ impl Cxx {
             .flat_map(|(_, vec_cxx_fn)| {
                 vec_cxx_fn
                     .iter()
-                    .map(|cxx_fn| cxx_fn.as_cxx_sig(&self.all_cxx_idents))
+                    .map(|cxx_fn| cxx_fn.as_cxx_bridge_sig(&self.all_cxx_idents))
             })
             .collect();
         quote!(#(#cxx_sig)*)
@@ -756,12 +753,26 @@ mod ffi_conversion {
         )
         .unwrap();
         let cxx_fn = CxxFn::new(item_fn, None);
-        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new());
+        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
 
         assert_eq!(
             format!("{cxx_sig}"),
-            "fn get_ident_as_function_ffi (ty : & Type) -> Ident ;"
+            "fn get_ident_as_function_ffi (ty : & Type) -> Ident"
         )
+    }
+
+    #[test]
+    fn test_cxx_sig_const() {
+        let item_fn = syn::parse_str(
+            r#"pub const fn foo(ty: u8) -> usize {
+    todo!()
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
+
+        assert_eq!(format!("{cxx_sig}"), "fn foo_ffi (ty : u8) -> usize")
     }
 
     #[test]
@@ -773,11 +784,13 @@ mod ffi_conversion {
         )
         .unwrap();
         let cxx_fn = CxxFn::new(item_fn, None);
-        let cxx_sig = cxx_fn.as_cxx_sig(&[format_ident!("Foo"), format_ident!("Bar")].into());
+        let cxx_sig = cxx_fn
+            .as_cxx_sig(&[format_ident!("Foo"), format_ident!("Bar")].into())
+            .to_token_stream();
 
         assert_eq!(
             format!("{cxx_sig}"),
-            "fn add_ffi_to_types_ffi (foo : & FooFfi) -> Vec < BarFfi > ;"
+            "fn add_ffi_to_types_ffi (foo : & FooFfi) -> Vec < BarFfi >"
         )
     }
 
@@ -790,11 +803,11 @@ mod ffi_conversion {
         )
         .unwrap();
         let cxx_fn = CxxFn::new(item_fn, None);
-        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new());
+        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
 
         assert_eq!(
             format!("{cxx_sig}"),
-            "fn get_ident_as_function_ffi (ty : & Type) -> Result < Ident > ;"
+            "fn get_ident_as_function_ffi (ty : & Type) -> Result < Ident >"
         )
     }
 
@@ -879,7 +892,7 @@ mod ffi_conversion {
                 .to_tokens(&mut cxx_sig);
         }
 
-        assert_eq!(format!("{cxx_sig}"), "fn foo_new (x : usize) -> Foo ;")
+        assert_eq!(format!("{cxx_sig}"), "fn foo_new (x : usize) -> Foo")
     }
 
     #[test]
