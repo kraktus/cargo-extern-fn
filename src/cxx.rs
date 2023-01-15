@@ -456,10 +456,11 @@ fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
     let x_ident = &x.ident;
     let y_ident = &y.ident;
     // We assume the enum has only unit fields
-    let body = x
-        .variants
-        .iter()
-        .map(|v| quote!(<#x_ident>::#v => Self::#v));
+    let body = x.variants.iter().map(|v| {
+        let mut variant_wo_discriminant = v.clone();
+        variant_wo_discriminant.discriminant = None;
+        quote!(<#x_ident>::#variant_wo_discriminant => Self::#variant_wo_discriminant)
+    });
 
     quote!(impl From<#x_ident> for #y_ident {
         fn from(x: #x_ident) -> Self {
@@ -663,6 +664,41 @@ mod ffi_conversion {
     #[test]
     fn test_ffi_enum_conversion() {
         let file: syn::File = syn::parse_str(r#"pub enum Citizen { Adult, Minor}"#).unwrap();
+        let cxx = Cxx::default();
+        let conv = cxx.ffi_conversion(&file);
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#conv)),
+            r#"/// Auto-generated code with `cargo-extern-fn`
+mod ffi_conversion {
+    use super::*;
+    use crate::ffi::*;
+    impl From<Citizen> for CitizenFfi {
+        fn from(x: Citizen) -> Self {
+            match x {
+                <Citizen>::Adult => Self::Adult,
+                <Citizen>::Minor => Self::Minor,
+                _ => unreachable!("No variant left"),
+            }
+        }
+    }
+    impl From<CitizenFfi> for Citizen {
+        fn from(x: CitizenFfi) -> Self {
+            match x {
+                <CitizenFfi>::Adult => Self::Adult,
+                <CitizenFfi>::Minor => Self::Minor,
+                _ => unreachable!("No variant left"),
+            }
+        }
+    }
+}
+"#
+        )
+    }
+
+    #[test]
+    fn test_ffi_enum_conversion_with_discriminant() {
+        let file: syn::File =
+            syn::parse_str(r#"pub enum Citizen { Adult = 12, Minor = 123}"#).unwrap();
         let cxx = Cxx::default();
         let conv = cxx.ffi_conversion(&file);
         assert_eq!(

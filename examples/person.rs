@@ -46,6 +46,8 @@ impl Person {
     }
 }
 
+#[inline]
+#[must_use]
 pub fn foo(u: usize) -> u8 {
     u.try_into().unwrap()
 }
