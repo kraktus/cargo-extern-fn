@@ -85,7 +85,7 @@ impl StructOrEnum {
     fn as_x_struct(&self, suffix: &str) -> Option<ItemStruct> {
         match self {
             StructOrEnum::S(struct_) => {
-                trace!("Creating raw struct of {}", struct_.ident);
+                trace!("Creating ffi struct of {}", struct_.ident);
                 let mut raw_struct = struct_.clone();
                 raw_struct.ident = format_ident!("{}{suffix}", struct_.ident);
                 for field_mut in raw_struct.fields.iter_mut() {
@@ -231,6 +231,16 @@ impl CxxFn {
     }
 
     fn as_cxx_sig(&self, idents_to_add: &HashSet<Ident>) -> TokenStream {
+        trace!(
+            "Generating cxx sig of {}::{}",
+            self.ty
+                .as_ref()
+                .and_then(get_ident)
+                .as_ref()
+                .map(Ident::to_string)
+                .unwrap_or_default(),
+            self.item_fn.sig.ident
+        );
         let mut cxx_sig = self.item_fn.sig.clone();
         cxx_sig.ident = self.cxx_ident();
         for arg in cxx_sig.inputs.iter_mut() {
