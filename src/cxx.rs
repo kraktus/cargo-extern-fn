@@ -383,13 +383,12 @@ impl<'ast> Visit<'ast> for GatherSignatures {
             && get_ident(&item_impl.self_ty)
                 .map_or(false, |ident| self.allowed_idents.contains(&ident))
         {
+            let outer_impl_ty = self.current_impl_ty.clone();
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
-            trace!("Looking at impl of {:?}", get_ident(&item_impl.self_ty))
-        } else {
-            self.current_impl_ty = None;
+            trace!("Looking at impl of {:?}", get_ident(&item_impl.self_ty));
+            visit::visit_item_impl(self, item_impl);
+            self.current_impl_ty = outer_impl_ty;
         }
-        visit::visit_item_impl(self, item_impl);
-        self.current_impl_ty = None;
     }
 
     fn visit_item(&mut self, i: &'ast Item) {
@@ -883,6 +882,33 @@ mod ffi_conversion {
         }
 
         assert_eq!(format!("{cxx_sig}"), "fn foo_new (x : usize) -> Foo ;")
+    }
+
+    #[test]
+    fn test_gather_in_pub_crate() {
+        let parsed_file = syn::parse_str(
+            r#"pub(crate) struct Foo { x: usize }
+            impl Foo {
+                pub fn new(x: usize) -> Foo {
+                    Self {x}
+                }
+            }
+    "#,
+        )
+        .unwrap();
+        // no ident since the struct is not public
+        let mut gather_sig = GatherSignatures::new(HashSet::new());
+        gather_sig.visit_file(&parsed_file);
+        let mut cxx_sig = TokenStream::new();
+        for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
+            assert!(ty_opt.is_none());
+            assert_eq!(vec_fn.len(), 1);
+            vec_fn[0]
+                .as_cxx_sig(&HashSet::new())
+                .to_tokens(&mut cxx_sig);
+        }
+
+        assert_eq!(format!("{cxx_sig}"), "")
     }
 
     #[test]
