@@ -647,6 +647,55 @@ mod ffi_conversion {
         )
     }
 
+
+    #[test]
+    fn test_ffi_struct_conversions_with_2struc() {
+        let file: syn::File = syn::parse_str(r#"pub struct Foo(usize, u64, u8); pub struct Bar {x: usize, y: u8}"#).unwrap();
+        let cxx = Cxx::default();
+        let conv = cxx.ffi_conversion(&file);
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#conv)),
+            "/// Auto-generated code with `cargo-extern-fn`
+mod ffi_conversion {
+    use crate::ffi::*;
+    impl From<Foo> for FooFfi {
+        fn from(x: Foo) -> Self {
+            Self {
+                n0: x.0.into(),
+                n1: x.1.into(),
+                n2: x.2.into(),
+            }
+                .into()
+        }
+    }
+    impl From<FooFfi> for Foo {
+        fn from(x: FooFfi) -> Self {
+            Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
+        }
+    }
+    impl From<Bar> for BarFfi {
+        fn from(x: Bar) -> Self {
+            Self {
+                x: x.x.into(),
+                y: x.y.into(),
+            }
+                .into()
+        }
+    }
+    impl From<BarFfi> for Bar {
+        fn from(x: BarFfi) -> Self {
+            Self {
+                x: x.x.into(),
+                y: x.y.into(),
+            }
+                .into()
+        }
+    }
+}
+"
+        )
+    }
+
     #[test]
     fn test_cxx_sig() {
         let item_fn = syn::parse_str(
