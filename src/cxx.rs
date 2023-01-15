@@ -393,7 +393,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
         if attrs(i).map_or(true, |attrs| {
             attrs
                 .iter()
-                .all(|a| !meta_is_extern_fn_skip(a.parse_meta()))
+                .all(|a| !a.path.is_ident("cfg") && !meta_is_extern_fn_skip(a.parse_meta()))
         }) {
             visit::visit_item(self, i)
         }
