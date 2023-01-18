@@ -186,6 +186,7 @@ struct GatherSignatures {
     current_impl_ty: Option<syn::Type>,
     allowed_idents: HashSet<Ident>,
     cxx_fn_buf: HashMap<Option<Type>, Vec<CxxFn>>,
+    module: Option<Ident>, // name of the module (only looking at the file for now). `None` if declared in `lib.rs`
 }
 
 #[derive(Debug, Clone)]
@@ -194,10 +195,11 @@ struct CxxFn {
     ty: Option<Type>, // set on methods and associated functions
     is_associated: bool,
     pub return_is_opt: bool, // cxx does not handle `Option`... convert to `Result`
+    module: Option<Ident>, // name of the module (only looking at the file for now). `None` if declared in `lib.rs`
 }
 
 impl CxxFn {
-    fn new(item_fn: ItemFn, ty: Option<Type>) -> Self {
+    fn new(item_fn: ItemFn, ty: Option<Type>, module: Option<Ident>) -> Self {
         let return_is_opt = if let ReturnType::Type(_, ty) = item_fn.sig.output.clone() {
             is_type("Option", &ty)
         } else {
@@ -206,6 +208,7 @@ impl CxxFn {
         Self {
             is_associated: ty.is_some() && !is_method(&item_fn.sig),
             item_fn,
+            module,
             return_is_opt,
             ty,
         }
@@ -319,6 +322,10 @@ impl CxxFn {
         } else {
             call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!())
         };
+        if let Some(module) = self.module.as_ref() {
+            call_fn = quote!(#module :: #call_fn);
+        }
+
         if self.return_is_opt {
             call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or(()));
         };
@@ -342,11 +349,12 @@ impl CxxFn {
 }
 
 impl GatherSignatures {
-    fn new(allowed_idents: HashSet<Ident>) -> Self {
+    fn new(allowed_idents: HashSet<Ident>, module: Option<Ident>) -> Self {
         Self {
             current_impl_ty: None,
             allowed_idents,
             cxx_fn_buf: HashMap::new(),
+            module,
         }
     }
 
@@ -370,7 +378,11 @@ impl GatherSignatures {
                     self.current_impl_ty.clone()
                 })
                 .or_default()
-                .push(CxxFn::new(item_fn.clone(), self.current_impl_ty.clone()));
+                .push(CxxFn::new(
+                    item_fn.clone(),
+                    self.current_impl_ty.clone(),
+                    self.module.clone(),
+                ));
         }
     }
 }
@@ -553,14 +565,15 @@ impl Cxx {
     // Scan a source-code file to get Idents of data_struct (enum/struct) and function signatures
     // (method or free functions)
     // to be added to the bridge and turned into Ffi data_struct
-    pub fn gather_data_struct_and_sign(&mut self, parsed_file: &syn::File) {
+    pub fn gather_data_struct_and_sign(&mut self, parsed_file: &syn::File, module: Ident) {
+        let module_opt = (module != format_ident!("lib")).then(|| module);
         trace!("Starting GatherDataStructures pass");
         let mut gather_ds = GatherDataStructures::default();
         gather_ds.visit_file(parsed_file);
         trace!("Finished GatherDataStructures pass");
         let (pub_struct_or_enum, idents) = gather_ds.results();
         trace!("Starting GatherSignatures pass");
-        let mut gather_sig = GatherSignatures::new(idents);
+        let mut gather_sig = GatherSignatures::new(idents, module_opt);
         gather_sig.visit_file(parsed_file);
         trace!("Finished GatherSignatures pass");
         self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
@@ -722,11 +735,13 @@ mod ffi_conversion {
 
     #[test]
     fn test_ffi_enum_conversion_with_discriminant() {
-        let file: syn::File =
-            syn::parse_str(r#"pub enum Citizen {
+        let file: syn::File = syn::parse_str(
+            r#"pub enum Citizen {
                 /// Nice doc comment 
                 Adult = 12, 
-                Minor = 123}"#).unwrap();
+                Minor = 123}"#,
+        )
+        .unwrap();
         let cxx = Cxx::default();
         let conv = cxx.ffi_conversion(&file);
         assert_eq!(
@@ -817,7 +832,7 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_fn = CxxFn::new(item_fn, None, None);
         let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
 
         assert_eq!(
@@ -834,7 +849,7 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_fn = CxxFn::new(item_fn, None, None);
         let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
 
         assert_eq!(format!("{cxx_sig}"), "fn foo_ffi (ty : u8) -> usize")
@@ -848,7 +863,7 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_fn = CxxFn::new(item_fn, None, None);
         let cxx_sig = cxx_fn
             .as_cxx_sig(&[format_ident!("Foo"), format_ident!("Bar")].into())
             .to_token_stream();
@@ -867,7 +882,7 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_fn = CxxFn::new(item_fn, None, None);
         let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
 
         assert_eq!(
@@ -884,12 +899,33 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_fn = CxxFn::new(item_fn, None, None);
         let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
             format!("{cxx_impl}"),
             "pub fn foo_ffi (u : usize) -> usize { let res = foo (u) ; res . into () }"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl_with_module() {
+        let item_fn = syn::parse_str(
+            r#"pub fn foo(u: usize) -> usize {
+    u+1
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None, Some(format_ident!("foo")));
+        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn foo_ffi(u: usize) -> usize {
+    let res = foo::foo(u);
+    res.into()
+}
+"
         )
     }
 
@@ -901,7 +937,7 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None);
+        let cxx_fn = CxxFn::new(item_fn, None, None);
         let cxx_impl = cxx_fn.as_cxx_impl(&[format_ident!("Person")].into());
 
         assert_eq!(
@@ -922,7 +958,7 @@ mod ffi_conversion {
         )
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
-        let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None);
         let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
@@ -946,7 +982,7 @@ mod ffi_conversion {
     "#,
         )
         .unwrap();
-        let mut gather_sig = GatherSignatures::new([format_ident!("Foo")].into());
+        let mut gather_sig = GatherSignatures::new([format_ident!("Foo")].into(), None);
         gather_sig.visit_file(&parsed_file);
         let mut cxx_sig = TokenStream::new();
         for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
@@ -973,7 +1009,7 @@ mod ffi_conversion {
         )
         .unwrap();
         // no ident since the struct is not public
-        let mut gather_sig = GatherSignatures::new(HashSet::new());
+        let mut gather_sig = GatherSignatures::new(HashSet::new(), None);
         gather_sig.visit_file(&parsed_file);
         let mut cxx_sig = TokenStream::new();
         for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
@@ -998,7 +1034,7 @@ mod ffi_conversion {
     "#,
         )
         .unwrap();
-        let mut gather_sig = GatherSignatures::new([format_ident!("Foo")].into());
+        let mut gather_sig = GatherSignatures::new([format_ident!("Foo")].into(), None);
         gather_sig.visit_file(&parsed_file);
         let mut cxx_sig = TokenStream::new();
         for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
@@ -1021,7 +1057,7 @@ mod ffi_conversion {
         )
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
-        let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None);
         let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
@@ -1044,7 +1080,7 @@ mod ffi_conversion {
         )
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
-        let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None);
         let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(
@@ -1068,7 +1104,7 @@ mod ffi_conversion {
         )
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
-        let cxx_fn = CxxFn::new(item_fn, Some(ty.0));
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None);
         let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
 
         assert_eq!(

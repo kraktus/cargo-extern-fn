@@ -1,4 +1,5 @@
 use std::{
+    ffi::{OsStr, OsString},
     fs::{self, DirEntry, File},
     io::{Read, Write},
     path::PathBuf,
@@ -9,6 +10,7 @@ use clap::{ArgAction, Args, Parser};
 use env_logger::Builder;
 use log::{debug, info, trace, LevelFilter};
 
+use quote::format_ident;
 use syn::parse_quote;
 
 mod cxx;
@@ -92,6 +94,7 @@ fn main() {
         .init();
 
     let mut cxx = Cxx::default();
+    trace!("args values: {:?}", &args);
 
     debug!("looking at... {}", args.common.dir.display());
     debug!("Beginning scanning visit");
@@ -101,7 +104,15 @@ fn main() {
         let mut src = String::new();
         file.read_to_string(&mut src).expect("Unable to read file");
         let parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-        cxx.gather_data_struct_and_sign(&parsed_file);
+        let module = format_ident!(
+            "{}",
+            entry
+                .path()
+                .file_stem()
+                .map(OsStr::to_string_lossy)
+                .expect("file name without extension exist")
+        );
+        cxx.gather_data_struct_and_sign(&parsed_file, module);
         trace!("Finished handling the file");
     }
     debug!("Finished scanning visit");
