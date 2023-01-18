@@ -565,8 +565,8 @@ impl Cxx {
     // Scan a source-code file to get Idents of data_struct (enum/struct) and function signatures
     // (method or free functions)
     // to be added to the bridge and turned into Ffi data_struct
-    pub fn gather_data_struct_and_sign(&mut self, parsed_file: &syn::File, module: Ident) {
-        let module_opt = (module != format_ident!("lib")).then(|| module);
+    pub fn gather_data_struct_and_sign(&mut self, parsed_file: &syn::File, module: Ident, dry: bool) {
+        let module_opt = (!dry && module != format_ident!("lib")).then(|| module);
         trace!("Starting GatherDataStructures pass");
         let mut gather_ds = GatherDataStructures::default();
         gather_ds.visit_file(parsed_file);

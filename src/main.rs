@@ -112,7 +112,7 @@ fn main() {
                 .map(OsStr::to_string_lossy)
                 .expect("file name without extension exist")
         );
-        cxx.gather_data_struct_and_sign(&parsed_file, module);
+        cxx.gather_data_struct_and_sign(&parsed_file, module, args.common.dry);
         trace!("Finished handling the file");
     }
     debug!("Finished scanning visit");
