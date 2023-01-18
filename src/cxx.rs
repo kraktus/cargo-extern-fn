@@ -536,7 +536,7 @@ impl Cxx {
                 /// Auto-generated code with `cargo-extern-fn`
                 mod ffi_conversion {
                 use super::*;
-                use crate::ffi::*;
+                use crate::*;
                 #buf
             })
         } else {
