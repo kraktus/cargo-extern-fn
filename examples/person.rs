@@ -15,6 +15,13 @@ pub enum Citizen {
     Minor,
 }
 
+// should not be included in the bridge
+pub struct ErrorStruct;
+
+pub fn is_adult(c: Citizen) -> bool {
+    matches!(c, Citizen::Adult)
+}
+
 impl Person {
     pub fn new(age: u8, name: String) -> Person {
         Self {

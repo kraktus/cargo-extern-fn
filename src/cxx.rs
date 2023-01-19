@@ -140,6 +140,7 @@ impl GatherDataStructures {
 impl<'ast> Visit<'ast> for GatherDataStructures {
     fn visit_item_struct(&mut self, struct_: &'ast ItemStruct) {
         if matches!(struct_.vis, Visibility::Public(_)) && struct_.generics.params.is_empty()
+            && !struct_.fields.is_empty() // unit structs not supported in cxx bridge
         // generics not handled by cxx
         {
             self.pub_struct_or_enum
@@ -151,12 +152,12 @@ impl<'ast> Visit<'ast> for GatherDataStructures {
 
     fn visit_item_enum(&mut self, enum_: &'ast ItemEnum) {
         if matches!(enum_.vis, Visibility::Public(_))
-            && enum_.generics.params.is_empty()
+            && enum_.generics.params.is_empty() // generics not handled by cxx
+            && !enum_.variants.is_empty() // unit enum not supported in cxx bridge
             && enum_
                 .variants
                 .iter()
                 .all(|v| matches!(v.fields, Fields::Unit))
-        // generics not handled by cxx
         {
             self.idents.insert(enum_.ident.clone());
             self.pub_struct_or_enum.push(StructOrEnum::E(enum_.clone()))
@@ -661,6 +662,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_avoiding_unit_struct_enum() {
+        let file: syn::File = syn::parse_str(r#"pub struct S; pub enum E{}"#).unwrap();
+        let mut gather_ds = GatherDataStructures::default();
+        gather_ds.visit_file(&file);
+        let (struct_or_enum, _) = gather_ds.results();
+        assert!(struct_or_enum.is_empty())
+    }
+
+    #[test]
     fn test_ffi_struct_conversions() {
         let file: syn::File = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
         let cxx = Cxx::default();
@@ -684,32 +694,6 @@ mod ffi_conversion {
     impl From<FooFfi> for Foo {
         fn from(x: FooFfi) -> Self {
             Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
-        }
-    }
-}
-"
-        )
-    }
-
-    #[test]
-    fn test_ffi_unit_struct_conversions() {
-        let file: syn::File = syn::parse_str(r#"pub struct Foo;"#).unwrap();
-        let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file, false);
-        assert_eq!(
-            prettyplease::unparse(&parse_quote!(#conv)),
-            "/// Auto-generated code with `cargo-extern-fn`
-mod ffi_conversion {
-    use super::*;
-    use crate::ffi::*;
-    impl From<Foo> for FooFfi {
-        fn from(x: Foo) -> Self {
-            Self.into()
-        }
-    }
-    impl From<FooFfi> for Foo {
-        fn from(x: FooFfi) -> Self {
-            Self.into()
         }
     }
 }
