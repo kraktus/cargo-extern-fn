@@ -639,7 +639,7 @@ impl Cxx {
             }
             use cxx_bridge::*;
             #import_crate
-            type ResultFfi<T> = Result<T, ()>;
+            type Result<T> = ::std::result::Result<T, ()>;
 
             #ffi_impl
         ));
