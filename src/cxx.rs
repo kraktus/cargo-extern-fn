@@ -27,15 +27,11 @@ use crate::utils::{call_function_from_sig, is_type};
 #[derive(Default, Debug)]
 pub struct Cxx {
     all_cxx_fn: HashMap<Option<Type>, Vec<CxxFn>>,
-    all_cxx_struct_or_enum: HashSet<StructOrEnum>, // TODO maybe switch to derive
+    all_cxx_struct_or_enum: Vec<StructOrEnum>, // TODO maybe switch to derive
     all_cxx_idents: HashSet<Ident>,
 }
 
-fn as_idents(s_e: &HashSet<StructOrEnum>) -> HashSet<Ident> {
-    s_e.iter().map(StructOrEnum::ident).cloned().collect()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 enum StructOrEnum {
     S(ItemStruct),
     E(ItemEnum),
@@ -63,10 +59,6 @@ impl StructOrEnum {
             StructOrEnum::S(x) => &mut x.ident,
             StructOrEnum::E(x) => &mut x.ident,
         }
-    }
-
-    fn is_enum(&self) -> bool {
-        matches!(self, Self::E(_))
     }
 
     fn visit_mut<V: VisitMut>(&mut self, visitor: &mut V) {
@@ -242,7 +234,7 @@ impl CxxFn {
         }
     }
 
-    fn as_cxx_sig(&self, to_be_ffied: &HashSet<StructOrEnum>) -> Signature {
+    fn as_cxx_sig(&self, idents_to_be_ffied: &HashSet<Ident>) -> Signature {
         trace!(
             "Generating cxx sig of {}::{}",
             self.ty
@@ -264,16 +256,14 @@ impl CxxFn {
                 }
             }
         }
-        let idents = as_idents(to_be_ffied);
-        let mut visitor = AddSuffix::new("Ffi", &idents);
+        let mut visitor = AddSuffix::new("Ffi", idents_to_be_ffied);
         visitor.visit_signature_mut(&mut cxx_sig);
-
         cxx_sig
     }
 
     // same as cxx_sig but with the additional `&self` -> `self: &Foo` trick
-    fn as_cxx_bridge_sig(&self, to_be_ffied: &HashSet<StructOrEnum>) -> TokenStream {
-        let mut cxx_sig = self.as_cxx_sig(to_be_ffied);
+    fn as_cxx_bridge_sig(&self, idents_to_be_ffied: &HashSet<Ident>) -> TokenStream {
+        let mut cxx_sig = self.as_cxx_sig(idents_to_be_ffied);
         for arg in cxx_sig.inputs.iter_mut() {
             let ffi_ident = self
                 .ty
@@ -288,7 +278,7 @@ impl CxxFn {
     }
 
     // TokenStream of an ItemFn
-    fn as_cxx_impl(&self, idents_to_be_ffied: &HashSet<StructOrEnum>) -> TokenStream {
+    fn as_cxx_impl(&self, idents_to_be_ffied: &HashSet<Ident>) -> TokenStream {
         let mut cxx_item = self.item_fn.clone();
         cxx_item.sig = self.as_cxx_sig(idents_to_be_ffied);
 
@@ -512,7 +502,7 @@ impl Cxx {
             .flat_map(|(_, vec_cxx_fn)| {
                 vec_cxx_fn
                     .iter()
-                    .map(|cxx_fn| cxx_fn.as_cxx_bridge_sig(&self.all_cxx_struct_or_enum))
+                    .map(|cxx_fn| cxx_fn.as_cxx_bridge_sig(&self.all_cxx_idents))
             })
             .collect();
         quote!(#(#cxx_sig)*)
@@ -568,7 +558,7 @@ impl Cxx {
     fn generate_ffi_impl(&self) -> TokenStream {
         let mut buf = TokenStream::new();
         for (ty_opt, vec_fn) in self.all_cxx_fn.iter() {
-            let fn_impls = vec_fn.iter().map(|f| f.as_cxx_impl(&self.all_cxx_struct_or_enum));
+            let fn_impls = vec_fn.iter().map(|f| f.as_cxx_impl(&self.all_cxx_idents));
 
             if let Some(ty) = ty_opt {
                 let ffi_ident = format_ident!("{}Ffi", get_ident(ty).unwrap());
