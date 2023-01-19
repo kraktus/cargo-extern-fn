@@ -218,7 +218,7 @@ pub fn call_function_from_sig(
             FnArg::Receiver(_) => self_expr.to_tokens(&mut args_buf),
             FnArg::Typed(PatType { pat, .. }) => {
                 if let Pat::Ident(PatIdent { ident, .. }) = (**pat).clone() {
-                    quote!(#ident).to_tokens(&mut args_buf)
+                    quote!(#ident.into()).to_tokens(&mut args_buf)
                 }
             }
         }
