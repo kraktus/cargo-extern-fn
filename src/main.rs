@@ -129,7 +129,7 @@ fn main() {
         let mut src = String::new();
         file.read_to_string(&mut src).expect("Unable to read file");
         let parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-        let ffi_conversion = cxx.ffi_conversion(&parsed_file);
+        let ffi_conversion = cxx.ffi_conversion(&parsed_file, args.common.dry);
         trace!("Finished handling the file 2nd time");
         trace!("Conversion raw ts {}", format!("{ffi_conversion}"));
         let ffi_conversion_formated = prettyplease::unparse(&parse_quote!(#ffi_conversion));

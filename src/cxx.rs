@@ -507,7 +507,11 @@ impl Cxx {
         quote!(#(#cxx_sig)*)
     }
 
-    fn generate_ffi_conversions(&self, struct_or_enum: Vec<StructOrEnum>) -> TokenStream {
+    fn generate_ffi_conversions(
+        &self,
+        struct_or_enum: Vec<StructOrEnum>,
+        dry: bool,
+    ) -> TokenStream {
         let mut buf = TokenStream::new();
         for (original, ffi) in struct_or_enum
             .iter()
@@ -530,13 +534,19 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
+
+        let import_ffi = if !dry {
+            quote!(use crate::ffi::*;)
+        } else {
+            quote!()
+        };
         // only add the `ffi_conversion` module if there is something to include in it
         if !buf.is_empty() {
             quote!(
                 /// Auto-generated code with `cargo-extern-fn`
                 mod ffi_conversion {
                 use super::*;
-                use crate::*;
+                #import_ffi
                 #buf
             })
         } else {
@@ -565,7 +575,12 @@ impl Cxx {
     // Scan a source-code file to get Idents of data_struct (enum/struct) and function signatures
     // (method or free functions)
     // to be added to the bridge and turned into Ffi data_struct
-    pub fn gather_data_struct_and_sign(&mut self, parsed_file: &syn::File, module: Ident, dry: bool) {
+    pub fn gather_data_struct_and_sign(
+        &mut self,
+        parsed_file: &syn::File,
+        module: Ident,
+        dry: bool,
+    ) {
         let module_opt = (!dry && module != format_ident!("lib")).then(|| module);
         trace!("Starting GatherDataStructures pass");
         let mut gather_ds = GatherDataStructures::default();
@@ -583,44 +598,47 @@ impl Cxx {
 
     // once all files have been parsed once, add the conversion between
     // the ffi data_struct and original struct
-    pub fn ffi_conversion(&self, parsed_file: &syn::File) -> TokenStream {
+    pub fn ffi_conversion(&self, parsed_file: &syn::File, dry: bool) -> TokenStream {
         // need to get the idents declared in this file
         let mut gather_ds = GatherDataStructures::default();
         gather_ds.visit_file(parsed_file);
         let (struct_or_enum, _) = gather_ds.results();
-        self.generate_ffi_conversions(struct_or_enum)
+        self.generate_ffi_conversions(struct_or_enum, dry)
     }
 
     pub fn generate_ffi_bridge_and_impl(&self, code_dir: &Path, dry: bool) {
         let mut file = OpenOptions::new()
+            .create(true)
             .append(true)
             .read(true)
-            .open(code_dir.join("lib.rs"))
-            .or_else(|_| {
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .read(true)
-                    .open(code_dir.join("main.rs"))
-            })
-            .expect("reading lib.rs and main.rs in src_dir failed");
+            .open(code_dir.join("ffi.rs"))
+            .expect("reading ffi.rs in src_dir failed");
         let mut src_file = String::new();
         file.read_to_string(&mut src_file)
             .expect("Unable to read file");
         let cxx_struct_declarations = self.generate_cxx_types();
         let cxx_sig = self.generate_cxx_signatures();
         let ffi_impl = self.generate_ffi_impl();
+        // only need import when not in the same file
+        let import_crate = if !dry {
+            quote!(
+                use crate::*;
+            )
+        } else {
+            quote!()
+        };
         let parsed_file_formated = prettyplease::unparse(&parse_quote!(
             /// Auto-generated code with `cargo-extern-fn`
             #[cxx::bridge]
-            pub mod ffi {
+            pub mod cxx_bridge {
                 #cxx_struct_declarations
 
                     extern "Rust" {
                         #cxx_sig
                     }
             }
-            use ffi::*;
+            use cxx_bridge::*;
+            #import_crate
             type ResultFfi<T> = Result<T, ()>;
 
             #ffi_impl
@@ -646,7 +664,7 @@ mod tests {
     fn test_ffi_struct_conversions() {
         let file: syn::File = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file);
+        let conv = cxx.ffi_conversion(&file, false);
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             "/// Auto-generated code with `cargo-extern-fn`
@@ -677,7 +695,7 @@ mod ffi_conversion {
     fn test_ffi_unit_struct_conversions() {
         let file: syn::File = syn::parse_str(r#"pub struct Foo;"#).unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file);
+        let conv = cxx.ffi_conversion(&file, false);
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             "/// Auto-generated code with `cargo-extern-fn`
@@ -703,7 +721,7 @@ mod ffi_conversion {
     fn test_ffi_enum_conversion() {
         let file: syn::File = syn::parse_str(r#"pub enum Citizen { Adult, Minor}"#).unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file);
+        let conv = cxx.ffi_conversion(&file, false);
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             r#"/// Auto-generated code with `cargo-extern-fn`
@@ -743,7 +761,7 @@ mod ffi_conversion {
         )
         .unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file);
+        let conv = cxx.ffi_conversion(&file, false);
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             r#"/// Auto-generated code with `cargo-extern-fn`
@@ -779,7 +797,7 @@ mod ffi_conversion {
             syn::parse_str(r#"pub struct Foo(usize, u64, u8); pub struct Bar {x: usize, y: u8}"#)
                 .unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file);
+        let conv = cxx.ffi_conversion(&file, false);
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             "/// Auto-generated code with `cargo-extern-fn`
