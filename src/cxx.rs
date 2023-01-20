@@ -1187,7 +1187,7 @@ mod ffi_conversion {
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn is_adult(&self) -> bool {
-    let res = <bar::Bar>::is_adult(&<bar::Bar>::from(self.clone()));
+    let res = bar::Bar::is_adult(&<bar::Bar>::from(self.clone()));
     res.into()
 }
 "
@@ -1208,7 +1208,7 @@ mod ffi_conversion {
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn bar_bar_is_adult(self_: &bar_Bar) -> bool {
-    let res = <bar::Bar>::is_adult(&<bar::Bar>::from(self_.clone()));
+    let res = bar::Bar::is_adult(&<bar::Bar>::from(self_.clone()));
     res.into()
 }
 "
@@ -1328,7 +1328,7 @@ mod ffi_conversion {
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn name(self) -> [char; 5] {
-    let res = <bar::Bar>::name(self.into());
+    let res = bar::Bar::name(self.into());
     res.into()
 }
 "
@@ -1352,7 +1352,7 @@ mod ffi_conversion {
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn bday_value(mut self) -> Self {
     let mut x = <bar::Bar>::from(self);
-    let res = <bar::Bar>::bday_value(x);
+    let res = bar::Bar::bday_value(x);
     let res = Self::from(x);
     res.into()
 }
@@ -1376,7 +1376,7 @@ mod ffi_conversion {
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn bday(&mut self) {
     let mut x = <bar::Bar>::from(self.clone());
-    let res = <bar::Bar>::bday(&mut x);
+    let res = bar::Bar::bday(&mut x);
     *self = Self::from(x);
     res.into()
 }

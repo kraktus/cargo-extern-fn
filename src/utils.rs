@@ -242,7 +242,7 @@ pub fn call_function_from_sig(
 ) -> TokenStream {
     let fn_ident = format!(
         "{}{}",
-        ty.map(|ty| quote!(<#ty>::).to_string()).unwrap_or_default(),
+        ty.map(|ty| quote!(#ty::).to_string()).unwrap_or_default(),
         sig.ident
     );
     let mut args_buf = TokenStream::new();
@@ -353,7 +353,7 @@ mod tests {
         let sig: Signature = syn::parse_str("fn foo(&self) -> u8").unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
         assert_eq!(
-            "< bar :: Bar > :: foo (self_)",
+            "bar :: Bar :: foo (self_)",
             format!("{}", call_function_from_sig(Some(&ty), &sig, quote!(self_)))
         )
     }
