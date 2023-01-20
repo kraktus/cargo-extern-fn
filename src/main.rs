@@ -135,7 +135,8 @@ fn main() {
             println!("{src}");
             println!("{ffi_conversion_formated}")
         } else {
-            ouput.write_all(ffi_conversion_formated.as_bytes())
+            ouput
+                .write_all(ffi_conversion_formated.as_bytes())
                 .expect("appening ffi conversion failed");
         }
     }

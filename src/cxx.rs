@@ -22,7 +22,7 @@ use quote::{format_ident, quote, ToTokens};
 use crate::utils::{
     attrs, contains_tuple, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip,
     method_self_type, normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix,
-    SelfType,
+    SelfType, add_suffix,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -285,6 +285,19 @@ impl CxxFn {
         self.item_fn.sig.unsafety.is_some()
     }
 
+    // if a method, return `true` if `self` or `mut self`
+    fn takes_by_value(&self) -> bool {
+        self.self_type()
+            .as_ref()
+            .map(SelfType::is_by_value_kind)
+            .unwrap_or_default()
+    }
+
+    // if the function is a method, return the type of
+    fn self_type(&self) -> Option<SelfType> {
+        self.item_fn.sig.inputs.iter().find_map(method_self_type)
+    }
+
     fn return_result(&self) -> bool {
         if let ReturnType::Type(_, ref ty) = self.item_fn.sig.output {
             is_type("Result", ty)
@@ -298,7 +311,7 @@ impl CxxFn {
         if self.is_unsafe() {
             cxx_ident = format_ident!("unsafe_{}", cxx_ident);
         }
-        if self.is_associated || self.is_from_enum {
+        if self.is_associated || self.is_from_enum || self.takes_by_value() {
             cxx_ident = format_ident!(
                 "{}{}",
                 self.ty
@@ -345,10 +358,10 @@ impl CxxFn {
             **ty = result_without_error(unboxed_ty);
         }
         // enums need to be transformed into free functions
-        if self.is_from_enum {
+        if self.is_from_enum || self.takes_by_value() {
             for arg in cxx_sig.inputs.iter_mut() {
                 if let Some(normalised_arg) =
-                    normalise_receiver_arg(arg, self.ty.as_ref().and_then(get_ident), Some("_"))
+                    normalise_receiver_arg(arg, self.ty.clone(), Some("_"))
                 {
                     *arg = normalised_arg;
                 }
@@ -365,12 +378,11 @@ impl CxxFn {
     fn as_cxx_bridge_sig(&self, to_be_ffied: &IndexSet<StructOrEnum>) -> TokenStream {
         let mut cxx_sig = self.as_cxx_sig(to_be_ffied);
         for arg in cxx_sig.inputs.iter_mut() {
-            let ffi_ident = self
+            let ffied_ty = self
                 .ty
                 .as_ref()
-                .and_then(get_ident)
-                .map(|ty_ident| format_ident!("{ty_ident}Ffi"));
-            if let Some(normalised_arg) = normalise_receiver_arg(arg, ffi_ident, None) {
+                .map(|ty| add_suffix(ty, "Ffi"));
+            if let Some(normalised_arg) = normalise_receiver_arg(arg, ffied_ty, None) {
                 *arg = normalised_arg;
             }
         }
@@ -404,7 +416,7 @@ impl CxxFn {
 
         let mut call_fn = if let Some(self_type) = self_type_opt.as_ref() {
             let ty_ = self.ty.as_ref().expect("No type defined in method");
-            let self_ident = if self.is_from_enum {
+            let self_ident = if self.is_from_enum || self.takes_by_value() {
                 format_ident!("self_")
             } else {
                 format_ident!("self")
@@ -556,10 +568,12 @@ fn path(ident: &Ident, ident_mod: &Option<Ident>) -> TokenStream {
     } else {
         quote!(#ident)
     }
-
 }
 
-fn impl_from_x_to_y((x, x_mod): (&ItemStruct, &Option<Ident>), (y, y_mod): (&ItemStruct, &Option<Ident>)) -> TokenStream {
+fn impl_from_x_to_y(
+    (x, x_mod): (&ItemStruct, &Option<Ident>),
+    (y, y_mod): (&ItemStruct, &Option<Ident>),
+) -> TokenStream {
     let x_path = path(&x.ident, x_mod);
     let is_x_unnamed = matches!(&x.fields, Fields::Unnamed(_));
     let y_path = path(&y.ident, y_mod);
@@ -597,7 +611,10 @@ fn impl_from_x_to_y((x, x_mod): (&ItemStruct, &Option<Ident>), (y, y_mod): (&Ite
     })
 }
 
-fn impl_from_x_to_y_enum((x, x_mod): (&ItemEnum, &Option<Ident>), (y, y_mod): (&ItemEnum, &Option<Ident>)) -> TokenStream {
+fn impl_from_x_to_y_enum(
+    (x, x_mod): (&ItemEnum, &Option<Ident>),
+    (y, y_mod): (&ItemEnum, &Option<Ident>),
+) -> TokenStream {
     let x_path = path(&x.ident, x_mod);
     let y_path = path(&y.ident, y_mod);
     // We assume the enum has only unit fields
@@ -1181,7 +1198,7 @@ impl From<BarFfi> for demo::Bar {
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
-            "pub fn bar_bar_is_adult(self_: &bar_Bar) -> bool {
+            "pub fn bar_bar_is_adult(self_: &bar::Bar) -> bool {
     let res = bar::Bar::is_adult(&<bar::Bar>::from(self_.clone()));
     res.into()
 }
@@ -1301,8 +1318,8 @@ impl From<BarFfi> for demo::Bar {
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
-            "pub fn name(self) -> [char; 5] {
-    let res = bar::Bar::name(self.into());
+            "pub fn bar_bar_name(self_: bar::Bar) -> [char; 5] {
+    let res = bar::Bar::name(self_.into());
     res.into()
 }
 "
@@ -1324,7 +1341,7 @@ impl From<BarFfi> for demo::Bar {
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
-            "pub fn bday_value(mut self) -> Self {
+            "pub fn bar_bar_bday_value(mut self_: bar::Bar) -> Self {
     let mut x = <bar::Bar>::from(self);
     let res = bar::Bar::bday_value(x);
     let res = Self::from(x);

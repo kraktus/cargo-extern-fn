@@ -82,6 +82,33 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
     }
 }
 
+pub fn add_suffix(ty: &Type, suffix: &str) -> Type {
+    let mut ty_suffixed = ty.clone();
+    let mut v = AddSuffixLastSegment::new(suffix);
+    v.visit_type_mut(&mut ty_suffixed);
+    ty_suffixed
+}
+
+pub struct AddSuffixLastSegment<'a> {
+    suffix: &'a str,
+}
+
+impl<'a> AddSuffixLastSegment<'a> {
+    pub fn new(suffix: &'a str) -> Self {
+        Self {
+            suffix,
+        }
+    }
+}
+
+impl VisitMut for AddSuffixLastSegment<'_> {
+    fn visit_type_path_mut(&mut self, ty_path: &mut syn::TypePath) {
+        if let Some(last_seg) = ty_path.path.segments.last_mut() {
+            last_seg.ident = format_ident!("{}{}", last_seg.ident, self.suffix);
+        }
+    }
+}
+
 pub struct AddSuffix<'a> {
     suffix: &'a str,
     idents_to_add: &'a IndexSet<Ident>,
@@ -148,7 +175,7 @@ pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {
 /// `self<SUFFIX>: &<TYPE>`, `self<SUFFIX>: <TYPE>`, `self<SUFFIX>: &mut <TYPE>`
 pub fn normalise_receiver_arg(
     arg: &FnArg,
-    ty: Option<Ident>,
+    ty: Option<Type>,
     suffix: Option<&str>,
 ) -> Option<FnArg> {
     if let FnArg::Receiver(rec) = arg {
@@ -157,7 +184,7 @@ pub fn normalise_receiver_arg(
         Some(
             syn::parse2(match (rec.reference.clone(), rec.mutability) {
                 (None, None) => quote!(#normalised_self_ident: #name),
-                (None, Some(_)) => quote!(#normalised_self_ident: mut #name),
+                (None, Some(_)) => quote!(mut #normalised_self_ident: #name),
                 (Some((_, lifetime_opt)), None) => {
                     let lifetime = lifetime_opt.map(|lt| quote!(#lt)).unwrap_or_default();
                     quote!(#normalised_self_ident: &#lifetime #name)
@@ -167,7 +194,7 @@ pub fn normalise_receiver_arg(
                     quote!(#normalised_self_ident: &#lifetime mut #name)
                 }
             })
-            .unwrap(),
+            .expect("parsing of normalised arg"),
         )
     } else {
         None
@@ -215,6 +242,16 @@ pub enum SelfType {
     ValueMut,
     Ref,
     RefMut,
+}
+
+impl SelfType {
+    pub fn is_ref_kind(&self) -> bool {
+        matches!(self, Self::Ref | Self::RefMut)
+    }
+
+    pub fn is_by_value_kind(&self) -> bool {
+        matches!(self, Self::Value | Self::ValueMut)
+    }
 }
 
 pub fn method_self_type(arg: &FnArg) -> Option<SelfType> {

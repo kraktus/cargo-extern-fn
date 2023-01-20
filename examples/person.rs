@@ -1,6 +1,12 @@
 #[derive(Clone)]
 pub struct Age(u8);
 
+impl Age {
+    pub fn is_old(&self) -> bool {
+        self.0 >= 90
+    }
+}
+
 // this is a comment
 #[derive(Clone)]
 pub struct Person {
@@ -57,8 +63,6 @@ impl Person {
         Ok(self.age.clone())
     }
 
-    /// extern_fn:skip
-    // by value not supported for the moment
     pub fn to_citizen(self) -> Citizen {
         if self.is_adult() {
             Citizen::Adult
