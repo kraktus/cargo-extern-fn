@@ -1,6 +1,6 @@
 use std::{
     ffi::{OsStr, OsString},
-    fs::{self, DirEntry, File},
+    fs::{self, DirEntry, File, OpenOptions},
     io::{Read, Write},
     path::PathBuf,
 };
@@ -115,11 +115,14 @@ fn main() {
     debug!("Beginning writing visit");
     for entry in args.common.entries() {
         info!("scanning file 2nd time: {:?}", entry.path());
-        let mut file = fs::OpenOptions::new()
+        let mut file = OpenOptions::new()
             .read(true)
-            .append(true)
             .open(entry.path())
             .expect("2 reading file in src/ failed");
+        let mut ouput = OpenOptions::new()
+            .append(true)
+            .open(&args.common.dir.join("ffi.rs"))
+            .expect("reading ffi.rs in src_dir failed");
         let mut src = String::new();
         file.read_to_string(&mut src).expect("Unable to read file");
         let parsed_file = syn::parse_file(&src).expect("Unable to parse file");
@@ -132,7 +135,7 @@ fn main() {
             println!("{src}");
             println!("{ffi_conversion_formated}")
         } else {
-            file.write_all(ffi_conversion_formated.as_bytes())
+            ouput.write_all(ffi_conversion_formated.as_bytes())
                 .expect("appening ffi conversion failed");
         }
     }
