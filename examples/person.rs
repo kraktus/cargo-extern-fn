@@ -18,8 +18,10 @@ pub enum Citizen {
 // should not be included in the bridge
 pub struct ErrorStruct;
 
-pub fn is_adult(c: Citizen) -> bool {
-    matches!(c, Citizen::Adult)
+impl Citizen {
+    pub fn is_adult(self) -> bool {
+        matches!(self, Self::Adult)
+    }
 }
 
 impl Person {
@@ -56,6 +58,11 @@ impl Person {
 #[inline]
 #[must_use]
 pub fn foo(u: usize) -> u8 {
+    u.try_into().unwrap()
+}
+
+// should be turned into `unsafe_bar`
+pub unsafe fn bar(u: usize) -> u8 {
     u.try_into().unwrap()
 }
 

@@ -330,7 +330,7 @@ impl CxxFn {
             return quote!(#cxx_item);
         }
 
-        let self_type_opt = cxx_item.sig.inputs.iter().find_map(method_self_type);
+        let self_type_opt = self.item_fn.sig.inputs.iter().find_map(method_self_type);
         // if the function takes by value mut or ref mut, we need to create a mutable clone before calling
         // the method on the original struct/enum
         let before_call_fn = if let Some(self_type) = self_type_opt.as_ref() {
@@ -346,17 +346,18 @@ impl CxxFn {
 
         let mut call_fn = if let Some(self_type) = self_type_opt.as_ref() {
             let ty_ = self.ty.as_ref().expect("No type defined in method");
+            let self_ident = if self.is_from_enum {format_ident!("self_")} else {format_ident!("self")};
             match self_type {
                 SelfType::Value => {
-                    call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(self.into()))
+                    call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(#self_ident.into()))
                 }
                 SelfType::ValueMut => {
                     call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(x))
                 }
                 SelfType::Ref => call_function_from_sig(
                     self.ty.as_ref(),
-                    &cxx_item.sig,
-                    quote!(&<#ty_>::from(self.clone())),
+                    &self.item_fn.sig,
+                    quote!(&<#ty_>::from(#self_ident.clone())),
                 ),
                 SelfType::RefMut => {
                     call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(&mut x))
@@ -730,8 +731,7 @@ mod tests {
     }
 
     fn gen_ty(name: &str) -> Type {
-        let ident = format_ident!("{name}");
-        syn::parse2(quote!(#ident)).expect("gen ty")
+        syn::parse_str(name).unwrap()
     }
 
     #[test]
@@ -984,7 +984,7 @@ mod ffi_conversion {
     fn test_cxx_sig_enum() {
         let item_fn = syn::parse_str(
             r#"pub fn foo(&self, x: usize) -> usize {
-    u - 2
+    self.bar + x
     }"#,
         )
         .unwrap();
@@ -1098,6 +1098,27 @@ mod ffi_conversion {
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn is_adult(&self) -> bool {
     let res = <bar::Bar>::is_adult(&<bar::Bar>::from(self.clone()));
+    res.into()
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl_enum_ref_self_method() {
+        let item_fn = syn::parse_str(
+            r#"pub fn is_adult(&self) -> bool {
+        self.age >= 18
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, Some(gen_ty("bar::Bar")), None, true);
+        let cxx_impl = cxx_fn.as_cxx_impl(&IndexSet::new());
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn bar_bar_is_adult(self_: &bar_Bar) -> bool {
+    let res = <bar::Bar>::is_adult(&<bar::Bar>::from(self_.clone()));
     res.into()
 }
 "
