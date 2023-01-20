@@ -669,21 +669,12 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
-
-        let import_ffi = if !dry {
-            quote!(
-                use crate::ffi::*;
-            )
-        } else {
-            quote!()
-        };
         // only add the `ffi_conversion` module if there is something to include in it
         if !buf.is_empty() {
             quote!(
                 /// Auto-generated code with `cargo-extern-fn`
                 mod ffi_conversion {
                 use super::*;
-                #import_ffi
                 #buf
             })
         } else {
@@ -839,7 +830,6 @@ mod tests {
             "/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
     use super::*;
-    use crate::ffi::*;
     impl From<demo::Foo> for FooFfi {
         fn from(x: demo::Foo) -> Self {
             Self {
@@ -870,7 +860,6 @@ mod ffi_conversion {
             r#"/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
     use super::*;
-    use crate::ffi::*;
     impl From<demo::Citizen> for CitizenFfi {
         fn from(x: demo::Citizen) -> Self {
             match x {
@@ -910,7 +899,6 @@ mod ffi_conversion {
             r#"/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
     use super::*;
-    use crate::ffi::*;
     impl From<demo::Citizen> for CitizenFfi {
         fn from(x: demo::Citizen) -> Self {
             match x {
@@ -946,7 +934,6 @@ mod ffi_conversion {
             "/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
     use super::*;
-    use crate::ffi::*;
     impl From<demo::Foo> for FooFfi {
         fn from(x: demo::Foo) -> Self {
             Self {
