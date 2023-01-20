@@ -16,7 +16,7 @@ pub enum Citizen {
 }
 
 // should not be included in the bridge
-pub struct ErrorStruct;
+pub struct NoAnswer;
 
 impl Citizen {
     pub fn is_adult(self) -> bool {
@@ -32,12 +32,29 @@ impl Person {
         }
     }
 
+    // function skipped because bridge does not support tuples
+    pub fn new_from_tuple((age, name): (u8, String)) -> Person {
+        Self {
+            age: Age(age),
+            name,
+        }
+    }
+
     pub fn is_adult(&self) -> bool {
         self.age.0 >= 18
     }
 
     pub fn bday(&mut self) {
         self.age.0 += 1
+    }
+
+    // function skipped because bridge does not support tuples
+    pub fn name_and_age(self) -> (String, Age) {
+        (self.name, self.age)
+    }
+
+    pub fn ask_age(&self) -> Result<Age, NoAnswer> {
+        Ok(self.age.clone())
     }
 
     /// extern_fn:skip

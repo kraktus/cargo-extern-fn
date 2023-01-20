@@ -120,6 +120,22 @@ impl<'ast> visit::Visit<'ast> for ContainsRef {
     }
 }
 
+pub fn contains_tuple(sig: &Signature) -> bool {
+    let mut c = ContainsTuple::default();
+    c.visit_signature(sig);
+    c.0
+}
+
+#[derive(Default)]
+struct ContainsTuple(bool);
+
+impl<'ast> visit::Visit<'ast> for ContainsTuple {
+    fn visit_type_tuple(&mut self, _: &'ast syn::TypeTuple) {
+        self.0 = true;
+    }
+}
+
+
 // return the lower-cased version of the ident of a type, with a trailing `_`
 // the trailing underscore ensure it will not result in a keyword
 pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {

@@ -21,7 +21,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
     attrs, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip, method_self_type,
-    normalise_receiver_arg, return_contains_ref, AddSuffix, SelfType, result_without_error,
+    normalise_receiver_arg, return_contains_ref, AddSuffix, SelfType, result_without_error, contains_tuple,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -287,6 +287,11 @@ impl CxxFn {
                 }
             }
         }
+        // We need to remove the error side of Result<T, E> to be accepted on the bridge
+        if let ReturnType::Type(_, ref mut ty) = cxx_sig.output {
+            let unboxed_ty = *ty.clone();
+            **ty = result_without_error(unboxed_ty);
+        }
         // enums need to be transformed into free functions
         if self.is_from_enum {
             for arg in cxx_sig.inputs.iter_mut() {
@@ -317,12 +322,6 @@ impl CxxFn {
                 *arg = normalised_arg;
             }
         }
-        // We need to remove the error side of Result<T, E> to be accepted on the bridge
-        if let ReturnType::Type(_, ref mut ty) = cxx_sig.output {
-            let unboxed_ty = *ty.clone();
-            **ty = result_without_error(unboxed_ty);
-        }
-
         quote!(#cxx_sig;)
     }
 
@@ -430,6 +429,7 @@ impl GatherSignatures {
             // do not handle function with `cfg` attributes for the moment
             && item_fn.attrs.iter().all(|a| !a.path.is_ident("cfg") && !meta_is_extern_fn_skip(a.parse_meta()))
             && item_fn.sig.generics.params.is_empty()
+            && !contains_tuple(&item_fn.sig) // no supported by the bridge
         {
             trace!("handling fn {:?}", item_fn.sig.ident);
             let is_from_enum = self
@@ -938,11 +938,11 @@ mod ffi_conversion {
         )
         .unwrap();
         let cxx_fn = CxxFn::new(item_fn, None, None, false);
-        let cxx_sig = cxx_fn.as_cxx_bridge_sig(&IndexSet::new()).to_token_stream();
+        let cxx_sig = cxx_fn.as_cxx_sig(&IndexSet::new()).to_token_stream();
 
         assert_eq!(
             format!("{cxx_sig}"),
-            "fn get_ident_as_function_ffi (ty : & Type) -> Result < usize > ;"
+            "fn get_ident_as_function_ffi (ty : & Type) -> Result < usize >"
         )
     }
 
@@ -1178,6 +1178,27 @@ mod ffi_conversion {
         }
 
         assert_eq!(format!("{cxx_sig}"), "fn foo_new (x : usize) -> Foo")
+    }
+
+    #[test]
+    fn test_gather_no_fn_with_tupless() {
+        let parsed_file = syn::parse_str(
+            r#"impl Foo {
+                    pub fn name_and_age(self) -> (String, Age) {
+                        (self.name, self.age)
+                    }
+                    pub fn new_from_tuple((age, name): (u8, String)) -> Person {
+                        Self {
+                            age: Age(age),
+                            name,
+                        }
+                    }
+            }"#,
+        )
+        .unwrap();
+        let mut gather_sig = GatherSignatures::new([gen_struct("Foo")].into(), None);
+        gather_sig.visit_file(&parsed_file);
+        assert!(gather_sig.cxx_fn_buf.is_empty())
     }
 
     #[test]
