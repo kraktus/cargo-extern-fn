@@ -241,6 +241,14 @@ impl CxxFn {
         self.item_fn.sig.unsafety.is_some()
     }
 
+    fn return_result(&self) -> bool {
+        if let ReturnType::Type(_, ref ty) = self.item_fn.sig.output {
+            is_type("Result", ty)
+        } else {
+            false
+        }
+    }
+
     fn cxx_ident(&self) -> Ident {
         let mut cxx_ident = self.item_fn.sig.ident.clone();
         if self.is_unsafe() {
@@ -387,7 +395,9 @@ impl CxxFn {
         }
 
         if self.return_is_opt {
-            call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or(()));
+            call_fn = quote!(#call_fn.map(::std::convert::Into::into).ok_or("option none"));
+        } else if self.return_result() {
+            call_fn = quote!(#call_fn.map_or(Err("result error"), |r| Ok(r.into())))
         };
 
         // if the function takes by value mut or ref mut, we need to apply the differences of state from the original
@@ -712,7 +722,7 @@ impl Cxx {
             }
             use cxx_bridge::*;
             #import_crate
-            type Result<T> = ::std::result::Result<T, ()>;
+            type Result<T> = ::std::result::Result<T, &'static str>;
 
             #ffi_impl
         ));
