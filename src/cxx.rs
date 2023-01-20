@@ -493,7 +493,6 @@ impl GatherSignatures {
     fn handle_item_fn(
         &mut self,
         item_fn: &ItemFn,
-        is_associated: bool, // only set when handling associated functions
     ) {
         if item_fn.sig.asyncness.is_none()
             && item_fn.sig.abi.is_none()
@@ -556,15 +555,14 @@ impl<'ast> Visit<'ast> for GatherSignatures {
     }
 
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
-        self.handle_item_fn(item_fn, false);
+        self.handle_item_fn(item_fn);
         visit::visit_item_fn(self, item_fn);
     }
 
     fn visit_impl_item_method(&mut self, item_method: &'ast ImplItemMethod) {
         let item_fn: ItemFn =
             syn::parse2(item_method.to_token_stream()).expect("from method to bare fn failed");
-        let is_associated = !is_method(&item_fn.sig);
-        self.handle_item_fn(&item_fn, is_associated);
+        self.handle_item_fn(&item_fn);
 
         visit::visit_impl_item_method(self, item_method);
     }
@@ -694,7 +692,7 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
-        if !buf.is_empty() {
+        if !buf.is_empty() && !dry {
             quote!(use crate::ffi::*; #buf)
         } else {
             buf
