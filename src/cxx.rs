@@ -298,6 +298,10 @@ impl CxxFn {
         self.item_fn.sig.inputs.iter().find_map(method_self_type)
     }
 
+    fn should_be_turned_in_free_fn(&self) -> bool {
+        self.is_associated || self.takes_by_value() || self.is_from_enum
+    }
+
     fn return_result(&self) -> bool {
         if let ReturnType::Type(_, ref ty) = self.item_fn.sig.output {
             is_type("Result", ty)
@@ -311,7 +315,7 @@ impl CxxFn {
         if self.is_unsafe() {
             cxx_ident = format_ident!("unsafe_{}", cxx_ident);
         }
-        if self.is_associated || self.is_from_enum || self.takes_by_value() {
+        if self.should_be_turned_in_free_fn() {
             cxx_ident = format_ident!(
                 "{}{}",
                 self.ty
@@ -505,20 +509,22 @@ impl GatherSignatures {
                 .and_then(|ty| find_struct_enum(&self.allowed_ds, ty))
                 .map(StructOrEnum::is_enum)
                 .unwrap_or_default();
+            let cxx_fn = CxxFn::new(
+                    item_fn.clone(),
+                    self.current_impl_ty.clone(),
+                    self.module.clone(),
+                    is_from_enum,
+                );
+
             self.cxx_fn_buf
-                .entry(if is_associated || is_from_enum {
+                .entry(if cxx_fn.should_be_turned_in_free_fn() {
                     None // associated functions are converted into free functions
                          // same for functions from enum, because cxx does not support those
                 } else {
                     self.current_impl_ty.clone()
                 })
                 .or_default()
-                .push(CxxFn::new(
-                    item_fn.clone(),
-                    self.current_impl_ty.clone(),
-                    self.module.clone(),
-                    is_from_enum,
-                ));
+                .push(cxx_fn);
         }
     }
 }
