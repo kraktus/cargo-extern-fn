@@ -135,7 +135,6 @@ impl<'ast> visit::Visit<'ast> for ContainsTuple {
     }
 }
 
-
 // return the lower-cased version of the ident of a type, with a trailing `_`
 // the trailing underscore ensure it will not result in a keyword
 pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {

@@ -20,8 +20,9 @@ use syn::{ItemEnum, ItemStruct, Visibility};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
-    attrs, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip, method_self_type,
-    normalise_receiver_arg, return_contains_ref, AddSuffix, SelfType, result_without_error, contains_tuple,
+    attrs, contains_tuple, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip,
+    method_self_type, normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix,
+    SelfType,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -45,63 +46,95 @@ fn find_struct_enum<'a>(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum StructOrEnum {
+enum Inner {
     S(ItemStruct),
     E(ItemEnum),
 }
 
+impl Inner {
+    fn visit_mut<V: VisitMut>(&mut self, visitor: &mut V) {
+        match self {
+            Self::S(ref mut x) => syn::visit_mut::visit_item_struct_mut(visitor, x),
+            Self::E(ref mut x) => syn::visit_mut::visit_item_enum_mut(visitor, x),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct StructOrEnum {
+    inner: Inner,
+    module: Option<Ident>,
+}
+
 impl ToTokens for StructOrEnum {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        match &self {
-            StructOrEnum::S(x) => x.to_tokens(tokens),
-            StructOrEnum::E(x) => x.to_tokens(tokens),
+        match &self.inner {
+            Inner::S(x) => x.to_tokens(tokens),
+            Inner::E(x) => x.to_tokens(tokens),
         }
     }
 }
 
 impl StructOrEnum {
+    pub fn new_struct(s: ItemStruct, module: Option<Ident>) -> Self {
+        Self {
+            inner: Inner::S(s),
+            module,
+        }
+    }
+
+    pub fn new_enum(e: ItemEnum, module: Option<Ident>) -> Self {
+        Self {
+            inner: Inner::E(e),
+            module,
+        }
+    }
+
     fn ident(&self) -> &Ident {
-        match &self {
-            StructOrEnum::S(x) => &x.ident,
-            StructOrEnum::E(x) => &x.ident,
+        match &self.inner {
+            Inner::S(x) => &x.ident,
+            Inner::E(x) => &x.ident,
         }
     }
 
     fn ident_mut(&mut self) -> &mut Ident {
-        match self {
-            StructOrEnum::S(x) => &mut x.ident,
-            StructOrEnum::E(x) => &mut x.ident,
+        match self.inner {
+            Inner::S(ref mut x) => &mut x.ident,
+            Inner::E(ref mut x) => &mut x.ident,
         }
     }
 
     fn is_enum(&self) -> bool {
-        matches!(self, Self::E(_))
+        matches!(self.inner, Inner::E(_))
     }
 
     fn visit_mut<V: VisitMut>(&mut self, visitor: &mut V) {
-        match self {
-            StructOrEnum::S(x) => syn::visit_mut::visit_item_struct_mut(visitor, x),
-            StructOrEnum::E(x) => syn::visit_mut::visit_item_enum_mut(visitor, x),
+        match self.inner {
+            Inner::S(ref mut x) => syn::visit_mut::visit_item_struct_mut(visitor, x),
+            Inner::E(ref mut x) => syn::visit_mut::visit_item_enum_mut(visitor, x),
         }
     }
 
-    fn as_ffi(&self, idents_to_add: &IndexSet<Ident>) -> StructOrEnum {
-        let mut ffi = match &self {
-            StructOrEnum::S(_x) => Self::S(self.as_x_struct("Ffi").expect("We know it's a struct")),
-            StructOrEnum::E(x) => {
+    fn as_ffi(&self, idents_to_add: &IndexSet<Ident>) -> Self {
+        let mut inner_ffi = match &self.inner {
+            Inner::S(_x) => Inner::S(self.as_x_struct("Ffi").expect("We know it's a struct")),
+            Inner::E(x) => {
                 let mut enum_ffi = x.clone();
                 enum_ffi.ident = format_ident!("{}Ffi", enum_ffi.ident);
-                Self::E(enum_ffi)
+                Inner::E(enum_ffi)
             }
         };
         let mut visitor = AddSuffix::new("Ffi", idents_to_add);
-        ffi.visit_mut(&mut visitor);
-        ffi
+        inner_ffi.visit_mut(&mut visitor);
+        Self {
+            inner: inner_ffi,
+            module: None, // since conversions will be made in the same file, do not use the module
+        }
     }
 
     fn as_x_struct(&self, suffix: &str) -> Option<ItemStruct> {
-        match self {
-            StructOrEnum::S(struct_) => {
+        match &self.inner {
+            Inner::S(struct_) => {
                 trace!("Creating ffi struct of {}", struct_.ident);
                 let mut raw_struct = struct_.clone();
                 raw_struct.ident = format_ident!("{}{suffix}", struct_.ident);
@@ -129,7 +162,7 @@ impl StructOrEnum {
                 }
                 Some(raw_struct)
             }
-            StructOrEnum::E(_) => None,
+            Inner::E(_) => None,
         }
     }
 
@@ -142,13 +175,22 @@ impl StructOrEnum {
 struct GatherDataStructures {
     pub_struct_or_enum: IndexSet<StructOrEnum>,
     idents: IndexSet<Ident>, // idents of struct/enums. TODO union?
+    module: Option<Ident>,
 }
 
 impl GatherDataStructures {
+    pub fn new(module: Option<Ident>) -> Self {
+        Self {
+            module,
+            ..Default::default()
+        }
+    }
+
     fn results(self) -> (IndexSet<StructOrEnum>, IndexSet<Ident>) {
         let Self {
             pub_struct_or_enum,
             idents,
+            ..
         } = self;
         (pub_struct_or_enum, idents)
     }
@@ -162,8 +204,10 @@ impl<'ast> Visit<'ast> for GatherDataStructures {
         // unit structs not supported in cxx bridge
         // generics not handled by cxx
         {
-            self.pub_struct_or_enum
-                .insert(StructOrEnum::S(struct_.clone()));
+            self.pub_struct_or_enum.insert(StructOrEnum::new_struct(
+                struct_.clone(),
+                self.module.clone(),
+            ));
             self.idents.insert(struct_.ident.clone());
         }
         visit::visit_item_struct(self, struct_);
@@ -180,7 +224,7 @@ impl<'ast> Visit<'ast> for GatherDataStructures {
         {
             self.idents.insert(enum_.ident.clone());
             self.pub_struct_or_enum
-                .insert(StructOrEnum::E(enum_.clone()));
+                .insert(StructOrEnum::new_enum(enum_.clone(), self.module.clone()));
         }
         visit::visit_item_enum(self, enum_);
     }
@@ -439,7 +483,8 @@ impl GatherSignatures {
             // do not handle function with `cfg` attributes for the moment
             && item_fn.attrs.iter().all(|a| !a.path.is_ident("cfg") && !meta_is_extern_fn_skip(a.parse_meta()))
             && item_fn.sig.generics.params.is_empty()
-            && !contains_tuple(&item_fn.sig) // no supported by the bridge
+            && !contains_tuple(&item_fn.sig)
+        // no supported by the bridge
         {
             trace!("handling fn {:?}", item_fn.sig.ident);
             let is_from_enum = self
@@ -505,10 +550,19 @@ impl<'ast> Visit<'ast> for GatherSignatures {
     }
 }
 
-fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
-    let x_ident = &x.ident;
+fn path(ident: &Ident, ident_mod: &Option<Ident>) -> TokenStream {
+    if let Some(ref module) = ident_mod {
+        quote!(#module::#ident)
+    } else {
+        quote!(#ident)
+    }
+
+}
+
+fn impl_from_x_to_y((x, x_mod): (&ItemStruct, &Option<Ident>), (y, y_mod): (&ItemStruct, &Option<Ident>)) -> TokenStream {
+    let x_path = path(&x.ident, x_mod);
     let is_x_unnamed = matches!(&x.fields, Fields::Unnamed(_));
-    let y_ident = &y.ident;
+    let y_path = path(&y.ident, y_mod);
     let body = match &y.fields {
         Fields::Named(nameds) => {
             let named_token = nameds.named.iter().enumerate().map(|(i, f)| {
@@ -536,24 +590,24 @@ fn impl_from_x_to_y(x: &ItemStruct, y: &ItemStruct) -> TokenStream {
         }
         Fields::Unit => TokenStream::new(),
     };
-    quote!(impl From<#x_ident> for #y_ident {
-        fn from(x: #x_ident) -> Self {
+    quote!(impl From<#x_path> for #y_path {
+        fn from(x: #x_path) -> Self {
             Self #body.into()
         }
     })
 }
 
-fn impl_from_x_to_y_enum(x: &ItemEnum, y: &ItemEnum) -> TokenStream {
-    let x_ident = &x.ident;
-    let y_ident = &y.ident;
+fn impl_from_x_to_y_enum((x, x_mod): (&ItemEnum, &Option<Ident>), (y, y_mod): (&ItemEnum, &Option<Ident>)) -> TokenStream {
+    let x_path = path(&x.ident, x_mod);
+    let y_path = path(&y.ident, y_mod);
     // We assume the enum has only unit fields
     let body = x.variants.iter().map(|v| {
         let variant_ident = &v.ident;
-        quote!(<#x_ident>::#variant_ident => Self::#variant_ident)
+        quote!(#x_path::#variant_ident => Self::#variant_ident)
     });
 
-    quote!(impl From<#x_ident> for #y_ident {
-        fn from(x: #x_ident) -> Self {
+    quote!(impl From<#x_path> for #y_path {
+        fn from(x: #x_path) -> Self {
                 match x {
                     #(#body),*,
                     _ => unreachable!("No variant left")
@@ -597,15 +651,17 @@ impl Cxx {
             .map(|x| x.original_and_ffi(&self.all_cxx_idents))
         {
             trace!("Generating conversion impl of {}", ffi.ident());
-            match (&original, &ffi) {
-                (StructOrEnum::S(a), StructOrEnum::S(b)) => {
-                    let back = impl_from_x_to_y(a, b);
-                    let forth = impl_from_x_to_y(b, a);
+            let original_mod = &original.module;
+            let ffi_mod = &ffi.module;
+            match (&original.inner, &ffi.inner) {
+                (Inner::S(a), Inner::S(b)) => {
+                    let back = impl_from_x_to_y((a, original_mod), (b, ffi_mod));
+                    let forth = impl_from_x_to_y((b, ffi_mod), (a, original_mod));
                     quote!(#back #forth)
                 }
-                (StructOrEnum::E(a), StructOrEnum::E(b)) => {
-                    let back = impl_from_x_to_y_enum(a, b);
-                    let forth = impl_from_x_to_y_enum(b, a);
+                (Inner::E(a), Inner::E(b)) => {
+                    let back = impl_from_x_to_y_enum((a, original_mod), (b, ffi_mod));
+                    let forth = impl_from_x_to_y_enum((b, ffi_mod), (a, original_mod));
                     quote!(#back #forth)
                 }
                 _ => unreachable!("Impossible to have a struct turned into enum or vice-versa"),
@@ -666,7 +722,7 @@ impl Cxx {
     ) {
         let module_opt = (!dry && module != format_ident!("lib")).then(|| module);
         trace!("Starting GatherDataStructures pass");
-        let mut gather_ds = GatherDataStructures::default();
+        let mut gather_ds = GatherDataStructures::new(module_opt.clone());
         gather_ds.visit_file(parsed_file);
         trace!("Finished GatherDataStructures pass");
         let (pub_struct_or_enum, idents) = gather_ds.results();
@@ -681,9 +737,10 @@ impl Cxx {
 
     // once all files have been parsed once, add the conversion between
     // the ffi data_struct and original struct
-    pub fn ffi_conversion(&self, parsed_file: &syn::File, dry: bool) -> TokenStream {
+    pub fn ffi_conversion(&self, parsed_file: &syn::File, dry: bool, module: Ident) -> TokenStream {
+        let module_opt = (!dry && module != format_ident!("lib")).then(|| module);
         // need to get the idents declared in this file
-        let mut gather_ds = GatherDataStructures::default();
+        let mut gather_ds = GatherDataStructures::new(module_opt);
         gather_ds.visit_file(parsed_file);
         let (struct_or_enum, _) = gather_ds.results();
         self.generate_ffi_conversions(struct_or_enum, dry)
@@ -745,12 +802,18 @@ mod tests {
 
     fn gen_struct(name: &str) -> StructOrEnum {
         let ident = format_ident!("{name}");
-        StructOrEnum::S(syn::parse2(quote!(pub struct #ident {x: usize})).expect("gen struct"))
+        StructOrEnum::new_struct(
+            syn::parse2(quote!(pub struct #ident {x: usize})).expect("gen struct"),
+            None,
+        )
     }
 
     fn gen_enum(name: &str) -> StructOrEnum {
         let ident = format_ident!("{name}");
-        StructOrEnum::E(syn::parse2(quote!(pub enum #ident {A, B})).expect("gen enum"))
+        StructOrEnum::new_enum(
+            syn::parse2(quote!(pub enum #ident {A, B})).expect("gen enum"),
+            None,
+        )
     }
 
     fn gen_ty(name: &str) -> Type {
@@ -770,15 +833,15 @@ mod tests {
     fn test_ffi_struct_conversions() {
         let file: syn::File = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file, false);
+        let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             "/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
     use super::*;
     use crate::ffi::*;
-    impl From<Foo> for FooFfi {
-        fn from(x: Foo) -> Self {
+    impl From<demo::Foo> for FooFfi {
+        fn from(x: demo::Foo) -> Self {
             Self {
                 n0: x.0.into(),
                 n1: x.1.into(),
@@ -787,7 +850,7 @@ mod ffi_conversion {
                 .into()
         }
     }
-    impl From<FooFfi> for Foo {
+    impl From<FooFfi> for demo::Foo {
         fn from(x: FooFfi) -> Self {
             Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
         }
@@ -801,27 +864,27 @@ mod ffi_conversion {
     fn test_ffi_enum_conversion() {
         let file: syn::File = syn::parse_str(r#"pub enum Citizen { Adult, Minor}"#).unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file, false);
+        let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             r#"/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
     use super::*;
     use crate::ffi::*;
-    impl From<Citizen> for CitizenFfi {
-        fn from(x: Citizen) -> Self {
+    impl From<demo::Citizen> for CitizenFfi {
+        fn from(x: demo::Citizen) -> Self {
             match x {
-                <Citizen>::Adult => Self::Adult,
-                <Citizen>::Minor => Self::Minor,
+                demo::Citizen::Adult => Self::Adult,
+                demo::Citizen::Minor => Self::Minor,
                 _ => unreachable!("No variant left"),
             }
         }
     }
-    impl From<CitizenFfi> for Citizen {
+    impl From<CitizenFfi> for demo::Citizen {
         fn from(x: CitizenFfi) -> Self {
             match x {
-                <CitizenFfi>::Adult => Self::Adult,
-                <CitizenFfi>::Minor => Self::Minor,
+                CitizenFfi::Adult => Self::Adult,
+                CitizenFfi::Minor => Self::Minor,
                 _ => unreachable!("No variant left"),
             }
         }
@@ -841,27 +904,27 @@ mod ffi_conversion {
         )
         .unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file, false);
+        let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             r#"/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
     use super::*;
     use crate::ffi::*;
-    impl From<Citizen> for CitizenFfi {
-        fn from(x: Citizen) -> Self {
+    impl From<demo::Citizen> for CitizenFfi {
+        fn from(x: demo::Citizen) -> Self {
             match x {
-                <Citizen>::Adult => Self::Adult,
-                <Citizen>::Minor => Self::Minor,
+                demo::Citizen::Adult => Self::Adult,
+                demo::Citizen::Minor => Self::Minor,
                 _ => unreachable!("No variant left"),
             }
         }
     }
-    impl From<CitizenFfi> for Citizen {
+    impl From<CitizenFfi> for demo::Citizen {
         fn from(x: CitizenFfi) -> Self {
             match x {
-                <CitizenFfi>::Adult => Self::Adult,
-                <CitizenFfi>::Minor => Self::Minor,
+                CitizenFfi::Adult => Self::Adult,
+                CitizenFfi::Minor => Self::Minor,
                 _ => unreachable!("No variant left"),
             }
         }
@@ -877,15 +940,15 @@ mod ffi_conversion {
             syn::parse_str(r#"pub struct Foo(usize, u64, u8); pub struct Bar {x: usize, y: u8}"#)
                 .unwrap();
         let cxx = Cxx::default();
-        let conv = cxx.ffi_conversion(&file, false);
+        let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
             "/// Auto-generated code with `cargo-extern-fn`
 mod ffi_conversion {
     use super::*;
     use crate::ffi::*;
-    impl From<Foo> for FooFfi {
-        fn from(x: Foo) -> Self {
+    impl From<demo::Foo> for FooFfi {
+        fn from(x: demo::Foo) -> Self {
             Self {
                 n0: x.0.into(),
                 n1: x.1.into(),
@@ -894,13 +957,13 @@ mod ffi_conversion {
                 .into()
         }
     }
-    impl From<FooFfi> for Foo {
+    impl From<FooFfi> for demo::Foo {
         fn from(x: FooFfi) -> Self {
             Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
         }
     }
-    impl From<Bar> for BarFfi {
-        fn from(x: Bar) -> Self {
+    impl From<demo::Bar> for BarFfi {
+        fn from(x: demo::Bar) -> Self {
             Self {
                 x: x.x.into(),
                 y: x.y.into(),
@@ -908,7 +971,7 @@ mod ffi_conversion {
                 .into()
         }
     }
-    impl From<BarFfi> for Bar {
+    impl From<BarFfi> for demo::Bar {
         fn from(x: BarFfi) -> Self {
             Self {
                 x: x.x.into(),

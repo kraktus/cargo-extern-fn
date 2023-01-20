@@ -10,6 +10,7 @@ use clap::{ArgAction, Args, Parser};
 use env_logger::Builder;
 use log::{debug, info, trace, LevelFilter};
 
+use proc_macro2::Ident;
 use quote::format_ident;
 use syn::parse_quote;
 
@@ -104,14 +105,7 @@ fn main() {
         let mut src = String::new();
         file.read_to_string(&mut src).expect("Unable to read file");
         let parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-        let module = format_ident!(
-            "{}",
-            entry
-                .path()
-                .file_stem()
-                .map(OsStr::to_string_lossy)
-                .expect("file name without extension exist")
-        );
+        let module = module(&entry);
         cxx.gather_data_struct_and_sign(&parsed_file, module, args.common.dry);
         trace!("Finished handling the file");
     }
@@ -129,7 +123,8 @@ fn main() {
         let mut src = String::new();
         file.read_to_string(&mut src).expect("Unable to read file");
         let parsed_file = syn::parse_file(&src).expect("Unable to parse file");
-        let ffi_conversion = cxx.ffi_conversion(&parsed_file, args.common.dry);
+        let module = module(&entry);
+        let ffi_conversion = cxx.ffi_conversion(&parsed_file, args.common.dry, module);
         trace!("Finished handling the file 2nd time");
         trace!("Conversion raw ts {}", format!("{ffi_conversion}"));
         let ffi_conversion_formated = prettyplease::unparse(&parse_quote!(#ffi_conversion));
@@ -142,4 +137,15 @@ fn main() {
         }
     }
     debug!("Finished writing visit");
+}
+
+fn module(entry: &DirEntry) -> Ident {
+    format_ident!(
+        "{}",
+        entry
+            .path()
+            .file_stem()
+            .map(OsStr::to_string_lossy)
+            .expect("file name without extension exist")
+    )
 }
