@@ -237,23 +237,30 @@ impl CxxFn {
         }
     }
 
+    fn is_unsafe(&self) -> bool {
+        self.item_fn.sig.unsafety.is_some()
+    }
+
     fn cxx_ident(&self) -> Ident {
+        let mut cxx_ident = self.item_fn.sig.ident.clone();
+        if self.is_unsafe() {
+            cxx_ident = format_ident!("unsafe_{}", cxx_ident);
+        }
         if self.is_associated || self.is_from_enum {
-            format_ident!(
+            cxx_ident = format_ident!(
                 "{}{}",
                 self.ty
                     .as_ref()
                     .and_then(get_ident_as_function)
                     .expect("type with ident"),
-                self.item_fn.sig.ident
+                cxx_ident
             )
         } else if self.ty.is_none() {
             // add a suffix to disambiguate free functions
             // TODO find better way if possible
-            format_ident!("{}_ffi", self.item_fn.sig.ident)
-        } else {
-            self.item_fn.sig.ident.clone()
+            cxx_ident = format_ident!("{}_ffi", cxx_ident)
         }
+        cxx_ident
     }
 
     fn as_cxx_sig(&self, to_be_ffied: &IndexSet<StructOrEnum>) -> Signature {
@@ -268,7 +275,8 @@ impl CxxFn {
             self.item_fn.sig.ident
         );
         let mut cxx_sig = self.item_fn.sig.clone();
-        // const functions not supported on the bridge
+        // const and unsafe functions not supported on the bridge
+        cxx_sig.unsafety = None;
         cxx_sig.constness = None;
         cxx_sig.ident = self.cxx_ident();
         if self.return_is_opt {
@@ -357,8 +365,12 @@ impl CxxFn {
         } else {
             call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!())
         };
+        // if the function is not accessible in the current namespace
         if let Some(module) = self.module.as_ref() {
             call_fn = quote!(#module :: #call_fn);
+        }
+        if self.is_unsafe() {
+            call_fn = quote!(unsafe { #call_fn });
         }
 
         if self.return_is_opt {
@@ -919,6 +931,20 @@ mod ffi_conversion {
     }
 
     #[test]
+    fn test_cxx_sig_const_unsafe() {
+        let item_fn = syn::parse_str(
+            r#"pub const unsafe fn foo(ty: u8) -> usize {
+    todo!()
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_sig = cxx_fn.as_cxx_sig(&IndexSet::new()).to_token_stream();
+
+        assert_eq!(format!("{cxx_sig}"), "fn unsafe_foo_ffi (ty : u8) -> usize")
+    }
+
+    #[test]
     fn test_cxx_sig_with_ffi() {
         let item_fn = syn::parse_str(
             r#"pub fn add_ffi_to_types(foo: &Foo) -> Vec<Bar> {
@@ -988,6 +1014,27 @@ mod ffi_conversion {
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn foo_ffi(u: usize) -> usize {
     let res = foo(u.into());
+    res.into()
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_cxx_impl_unsafe() {
+        let item_fn = syn::parse_str(
+            r#"pub unsafe fn foo(u: usize) -> usize {
+    u+1
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_impl = cxx_fn.as_cxx_impl(&IndexSet::new());
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn unsafe_foo_ffi(u: usize) -> usize {
+    let res = unsafe { foo(u.into()) };
     res.into()
 }
 "
