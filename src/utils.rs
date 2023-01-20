@@ -1,5 +1,4 @@
-use std::collections::HashSet;
-
+use indexmap::IndexSet;
 use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
 use quote::quote;
@@ -83,11 +82,11 @@ pub fn get_ident(ty: &Type) -> Option<Ident> {
 
 pub struct AddSuffix<'a> {
     suffix: &'a str,
-    idents_to_add: &'a HashSet<Ident>,
+    idents_to_add: &'a IndexSet<Ident>,
 }
 
 impl<'a> AddSuffix<'a> {
-    pub fn new(suffix: &'a str, idents_to_add: &'a HashSet<Ident>) -> Self {
+    pub fn new(suffix: &'a str, idents_to_add: &'a IndexSet<Ident>) -> Self {
         Self {
             suffix,
             idents_to_add,
@@ -236,8 +235,8 @@ pub fn call_function_from_sig(
 //
 // TODO how to make it shorter/better/faster/stronger?
 pub fn union(g1: Generics, g2: Generics) -> Generics {
-    let g1_param_sets: HashSet<GenericParam> = HashSet::from_iter(g1.params);
-    let g2_param_sets: HashSet<GenericParam> = HashSet::from_iter(g2.params);
+    let g1_param_sets: IndexSet<GenericParam> = IndexSet::from_iter(g1.params);
+    let g2_param_sets: IndexSet<GenericParam> = IndexSet::from_iter(g2.params);
     let union_params = <Punctuated<GenericParam, Token![,]>>::from_iter(
         g1_param_sets
             .union(&g2_param_sets)
@@ -246,10 +245,10 @@ pub fn union(g1: Generics, g2: Generics) -> Generics {
             .map(|p| Pair::new(p, Some(<Token![,]>::default()))),
     );
 
-    let g1_where_clause: Option<HashSet<WherePredicate>> =
-        g1.where_clause.map(|w| HashSet::from_iter(w.predicates));
-    let g2_where_clause: Option<HashSet<WherePredicate>> =
-        g2.where_clause.map(|w| HashSet::from_iter(w.predicates));
+    let g1_where_clause: Option<IndexSet<WherePredicate>> =
+        g1.where_clause.map(|w| IndexSet::from_iter(w.predicates));
+    let g2_where_clause: Option<IndexSet<WherePredicate>> =
+        g2.where_clause.map(|w| IndexSet::from_iter(w.predicates));
     let union_where = g1_where_clause
         .or(g2_where_clause.clone())
         .map(|g| WhereClause {
@@ -302,12 +301,13 @@ mod tests {
     use proc_macro2::Span;
 
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_call_function_from_sig() {
         let sig: Signature = syn::parse_str("fn foo(f: Foo, x: u64) -> bool").unwrap();
         assert_eq!(
-            "foo (f , x)",
+            "foo (f . into () , x . into ())",
             format!("{}", call_function_from_sig(None, &sig, quote!(self_)))
         )
     }

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use std::fs::{DirEntry, File, OpenOptions};
 use std::io::{Read, Write};
@@ -7,6 +7,7 @@ use std::path::Path;
 use log::trace;
 use proc_macro2::{Span, TokenStream};
 
+use indexmap::IndexSet;
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::visit_mut::VisitMut;
@@ -27,12 +28,20 @@ use crate::utils::{call_function_from_sig, is_type};
 #[derive(Default, Debug)]
 pub struct Cxx {
     all_cxx_fn: HashMap<Option<Type>, Vec<CxxFn>>,
-    all_cxx_struct_or_enum: HashSet<StructOrEnum>, // TODO maybe switch to derive
-    all_cxx_idents: HashSet<Ident>,
+    all_cxx_struct_or_enum: IndexSet<StructOrEnum>, // TODO maybe switch to derive
+    all_cxx_idents: IndexSet<Ident>,
 }
 
-fn as_idents(s_e: &HashSet<StructOrEnum>) -> HashSet<Ident> {
+fn as_idents(s_e: &IndexSet<StructOrEnum>) -> IndexSet<Ident> {
     s_e.iter().map(StructOrEnum::ident).cloned().collect()
+}
+
+fn find_struct_enum<'a>(
+    hash_set: &'a IndexSet<StructOrEnum>,
+    ty: &Type,
+) -> Option<&'a StructOrEnum> {
+    let ident = get_ident(ty)?;
+    hash_set.iter().find(|se| se.ident() == &ident)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -76,7 +85,7 @@ impl StructOrEnum {
         }
     }
 
-    fn as_ffi(&self, idents_to_add: &HashSet<Ident>) -> StructOrEnum {
+    fn as_ffi(&self, idents_to_add: &IndexSet<Ident>) -> StructOrEnum {
         let mut ffi = match &self {
             StructOrEnum::S(_x) => Self::S(self.as_x_struct("Ffi").expect("We know it's a struct")),
             StructOrEnum::E(x) => {
@@ -124,19 +133,19 @@ impl StructOrEnum {
         }
     }
 
-    fn original_and_ffi(&self, idents_to_add: &HashSet<Ident>) -> (Self, Self) {
+    fn original_and_ffi(&self, idents_to_add: &IndexSet<Ident>) -> (Self, Self) {
         (self.clone(), self.as_ffi(idents_to_add))
     }
 }
 
 #[derive(Debug, Clone, Default)]
 struct GatherDataStructures {
-    pub_struct_or_enum: Vec<StructOrEnum>,
-    idents: HashSet<Ident>, // idents of struct/enums. TODO union?
+    pub_struct_or_enum: IndexSet<StructOrEnum>,
+    idents: IndexSet<Ident>, // idents of struct/enums. TODO union?
 }
 
 impl GatherDataStructures {
-    fn results(self) -> (Vec<StructOrEnum>, HashSet<Ident>) {
+    fn results(self) -> (IndexSet<StructOrEnum>, IndexSet<Ident>) {
         let Self {
             pub_struct_or_enum,
             idents,
@@ -147,12 +156,14 @@ impl GatherDataStructures {
 
 impl<'ast> Visit<'ast> for GatherDataStructures {
     fn visit_item_struct(&mut self, struct_: &'ast ItemStruct) {
-        if matches!(struct_.vis, Visibility::Public(_)) && struct_.generics.params.is_empty()
-            && !struct_.fields.is_empty() // unit structs not supported in cxx bridge
+        if matches!(struct_.vis, Visibility::Public(_))
+            && struct_.generics.params.is_empty()
+            && !struct_.fields.is_empty()
+        // unit structs not supported in cxx bridge
         // generics not handled by cxx
         {
             self.pub_struct_or_enum
-                .push(StructOrEnum::S(struct_.clone()));
+                .insert(StructOrEnum::S(struct_.clone()));
             self.idents.insert(struct_.ident.clone());
         }
         visit::visit_item_struct(self, struct_);
@@ -168,7 +179,8 @@ impl<'ast> Visit<'ast> for GatherDataStructures {
                 .all(|v| matches!(v.fields, Fields::Unit))
         {
             self.idents.insert(enum_.ident.clone());
-            self.pub_struct_or_enum.push(StructOrEnum::E(enum_.clone()))
+            self.pub_struct_or_enum
+                .insert(StructOrEnum::E(enum_.clone()));
         }
         visit::visit_item_enum(self, enum_);
     }
@@ -193,7 +205,7 @@ impl<'ast> Visit<'ast> for GatherDataStructures {
 struct GatherSignatures {
     // only set if not a trait method
     current_impl_ty: Option<syn::Type>,
-    allowed_idents: HashSet<Ident>,
+    allowed_ds: IndexSet<StructOrEnum>,
     cxx_fn_buf: HashMap<Option<Type>, Vec<CxxFn>>,
     module: Option<Ident>, // name of the module (only looking at the file for now). `None` if declared in `lib.rs`
 }
@@ -203,12 +215,13 @@ struct CxxFn {
     pub item_fn: ItemFn,
     ty: Option<Type>, // set on methods and associated functions
     is_associated: bool,
+    is_from_enum: bool,      // either a method or associated function from an enum
     pub return_is_opt: bool, // cxx does not handle `Option`... convert to `Result`
     module: Option<Ident>, // name of the module (only looking at the file for now). `None` if declared in `lib.rs`
 }
 
 impl CxxFn {
-    fn new(item_fn: ItemFn, ty: Option<Type>, module: Option<Ident>) -> Self {
+    fn new(item_fn: ItemFn, ty: Option<Type>, module: Option<Ident>, is_from_enum: bool) -> Self {
         let return_is_opt = if let ReturnType::Type(_, ty) = item_fn.sig.output.clone() {
             is_type("Option", &ty)
         } else {
@@ -219,12 +232,13 @@ impl CxxFn {
             item_fn,
             module,
             return_is_opt,
+            is_from_enum,
             ty,
         }
     }
 
     fn cxx_ident(&self) -> Ident {
-        if self.is_associated {
+        if self.is_associated || self.is_from_enum {
             format_ident!(
                 "{}{}",
                 self.ty
@@ -242,7 +256,7 @@ impl CxxFn {
         }
     }
 
-    fn as_cxx_sig(&self, to_be_ffied: &HashSet<StructOrEnum>) -> Signature {
+    fn as_cxx_sig(&self, to_be_ffied: &IndexSet<StructOrEnum>) -> Signature {
         trace!(
             "Generating cxx sig of {}::{}",
             self.ty
@@ -264,6 +278,16 @@ impl CxxFn {
                 }
             }
         }
+        // enums need to be transformed into free functions
+        if self.is_from_enum {
+            for arg in cxx_sig.inputs.iter_mut() {
+                if let Some(normalised_arg) =
+                    normalise_receiver_arg(arg, self.ty.as_ref().and_then(get_ident), Some("_"))
+                {
+                    *arg = normalised_arg;
+                }
+            }
+        }
         let idents = as_idents(to_be_ffied);
         let mut visitor = AddSuffix::new("Ffi", &idents);
         visitor.visit_signature_mut(&mut cxx_sig);
@@ -272,7 +296,7 @@ impl CxxFn {
     }
 
     // same as cxx_sig but with the additional `&self` -> `self: &Foo` trick
-    fn as_cxx_bridge_sig(&self, to_be_ffied: &HashSet<StructOrEnum>) -> TokenStream {
+    fn as_cxx_bridge_sig(&self, to_be_ffied: &IndexSet<StructOrEnum>) -> TokenStream {
         let mut cxx_sig = self.as_cxx_sig(to_be_ffied);
         for arg in cxx_sig.inputs.iter_mut() {
             let ffi_ident = self
@@ -288,7 +312,7 @@ impl CxxFn {
     }
 
     // TokenStream of an ItemFn
-    fn as_cxx_impl(&self, idents_to_be_ffied: &HashSet<StructOrEnum>) -> TokenStream {
+    fn as_cxx_impl(&self, idents_to_be_ffied: &IndexSet<StructOrEnum>) -> TokenStream {
         let mut cxx_item = self.item_fn.clone();
         cxx_item.sig = self.as_cxx_sig(idents_to_be_ffied);
 
@@ -360,10 +384,10 @@ impl CxxFn {
 }
 
 impl GatherSignatures {
-    fn new(allowed_idents: HashSet<Ident>, module: Option<Ident>) -> Self {
+    fn new(allowed_ds: IndexSet<StructOrEnum>, module: Option<Ident>) -> Self {
         Self {
             current_impl_ty: None,
-            allowed_idents,
+            allowed_ds,
             cxx_fn_buf: HashMap::new(),
             module,
         }
@@ -382,9 +406,16 @@ impl GatherSignatures {
             && item_fn.sig.generics.params.is_empty()
         {
             trace!("handling fn {:?}", item_fn.sig.ident);
+            let is_from_enum = self
+                .current_impl_ty
+                .as_ref()
+                .and_then(|ty| find_struct_enum(&self.allowed_ds, ty))
+                .map(StructOrEnum::is_enum)
+                .unwrap_or_default();
             self.cxx_fn_buf
-                .entry(if is_associated {
+                .entry(if is_associated || is_from_enum {
                     None // associated functions are converted into free functions
+                         // same for functions from enum, because cxx does not support those
                 } else {
                     self.current_impl_ty.clone()
                 })
@@ -393,6 +424,7 @@ impl GatherSignatures {
                     item_fn.clone(),
                     self.current_impl_ty.clone(),
                     self.module.clone(),
+                    is_from_enum,
                 ));
         }
     }
@@ -402,7 +434,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         if item_impl.trait_.is_none()
             && get_ident(&item_impl.self_ty)
-                .map_or(false, |ident| self.allowed_idents.contains(&ident))
+                .map_or(false, |ident| as_idents(&self.allowed_ds).contains(&ident))
         {
             let outer_impl_ty = self.current_impl_ty.clone();
             self.current_impl_ty = Some(*item_impl.self_ty.clone());
@@ -520,7 +552,7 @@ impl Cxx {
 
     fn generate_ffi_conversions(
         &self,
-        struct_or_enum: Vec<StructOrEnum>,
+        struct_or_enum: IndexSet<StructOrEnum>,
         dry: bool,
     ) -> TokenStream {
         let mut buf = TokenStream::new();
@@ -547,7 +579,9 @@ impl Cxx {
         }
 
         let import_ffi = if !dry {
-            quote!(use crate::ffi::*;)
+            quote!(
+                use crate::ffi::*;
+            )
         } else {
             quote!()
         };
@@ -568,7 +602,9 @@ impl Cxx {
     fn generate_ffi_impl(&self) -> TokenStream {
         let mut buf = TokenStream::new();
         for (ty_opt, vec_fn) in self.all_cxx_fn.iter() {
-            let fn_impls = vec_fn.iter().map(|f| f.as_cxx_impl(&self.all_cxx_struct_or_enum));
+            let fn_impls = vec_fn
+                .iter()
+                .map(|f| f.as_cxx_impl(&self.all_cxx_struct_or_enum));
 
             if let Some(ty) = ty_opt {
                 let ffi_ident = format_ident!("{}Ffi", get_ident(ty).unwrap());
@@ -599,11 +635,11 @@ impl Cxx {
         trace!("Finished GatherDataStructures pass");
         let (pub_struct_or_enum, idents) = gather_ds.results();
         trace!("Starting GatherSignatures pass");
-        let mut gather_sig = GatherSignatures::new(idents, module_opt);
+        let mut gather_sig = GatherSignatures::new(pub_struct_or_enum.clone(), module_opt);
         gather_sig.visit_file(parsed_file);
         trace!("Finished GatherSignatures pass");
         self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
-        self.all_cxx_idents.extend(gather_sig.allowed_idents);
+        self.all_cxx_idents.extend(idents);
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
     }
 
@@ -670,6 +706,21 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    fn gen_struct(name: &str) -> StructOrEnum {
+        let ident = format_ident!("{name}");
+        StructOrEnum::S(syn::parse2(quote!(pub struct #ident {x: usize})).expect("gen struct"))
+    }
+
+    fn gen_enum(name: &str) -> StructOrEnum {
+        let ident = format_ident!("{name}");
+        StructOrEnum::E(syn::parse2(quote!(pub enum #ident {A, B})).expect("gen enum"))
+    }
+
+    fn gen_ty(name: &str) -> Type {
+        let ident = format_ident!("{name}");
+        syn::parse2(quote!(#ident)).expect("gen ty")
+    }
 
     #[test]
     fn test_avoiding_unit_struct_enum() {
@@ -844,8 +895,8 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None, None);
-        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_sig = cxx_fn.as_cxx_sig(&IndexSet::new()).to_token_stream();
 
         assert_eq!(
             format!("{cxx_sig}"),
@@ -861,8 +912,8 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None, None);
-        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_sig = cxx_fn.as_cxx_sig(&IndexSet::new()).to_token_stream();
 
         assert_eq!(format!("{cxx_sig}"), "fn foo_ffi (ty : u8) -> usize")
     }
@@ -875,9 +926,9 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None, None);
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
         let cxx_sig = cxx_fn
-            .as_cxx_sig(&[format_ident!("Foo"), format_ident!("Bar")].into())
+            .as_cxx_sig(&[gen_struct("Foo"), gen_struct("Bar")].into())
             .to_token_stream();
 
         assert_eq!(
@@ -894,12 +945,31 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None, None);
-        let cxx_sig = cxx_fn.as_cxx_sig(&HashSet::new()).to_token_stream();
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_sig = cxx_fn.as_cxx_sig(&IndexSet::new()).to_token_stream();
 
         assert_eq!(
             format!("{cxx_sig}"),
             "fn get_ident_as_function_ffi (ty : & Type) -> Result < Ident >"
+        )
+    }
+
+    #[test]
+    fn test_cxx_sig_enum() {
+        let item_fn = syn::parse_str(
+            r#"pub fn foo(&self, x: usize) -> usize {
+    u - 2
+    }"#,
+        )
+        .unwrap();
+        let enum_name = "Person";
+        let enum_ = gen_enum(enum_name);
+        let cxx_fn = CxxFn::new(item_fn, Some(gen_ty(enum_name)), None, true);
+        let cxx_sig = cxx_fn.as_cxx_sig(&[enum_].into()).to_token_stream();
+
+        assert_eq!(
+            format!("{cxx_sig}"),
+            "fn person_foo (self_ : & PersonFfi , x : usize) -> usize"
         )
     }
 
@@ -911,12 +981,16 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None, None);
-        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_impl = cxx_fn.as_cxx_impl(&IndexSet::new());
 
         assert_eq!(
-            format!("{cxx_impl}"),
-            "pub fn foo_ffi (u : usize) -> usize { let res = foo (u) ; res . into () }"
+            prettyplease::unparse(&parse_quote!(#cxx_impl)),
+            "pub fn foo_ffi(u: usize) -> usize {
+    let res = foo(u.into());
+    res.into()
+}
+"
         )
     }
 
@@ -928,13 +1002,13 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None, Some(format_ident!("foo")));
-        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
+        let cxx_fn = CxxFn::new(item_fn, None, Some(format_ident!("foo")), false);
+        let cxx_impl = cxx_fn.as_cxx_impl(&IndexSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
             "pub fn foo_ffi(u: usize) -> usize {
-    let res = foo::foo(u);
+    let res = foo::foo(u.into());
     res.into()
 }
 "
@@ -949,8 +1023,8 @@ mod ffi_conversion {
     }"#,
         )
         .unwrap();
-        let cxx_fn = CxxFn::new(item_fn, None, None);
-        let cxx_impl = cxx_fn.as_cxx_impl(&[format_ident!("Person")].into());
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_impl = cxx_fn.as_cxx_impl(&[gen_struct("Person")].into());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
@@ -970,8 +1044,8 @@ mod ffi_conversion {
         )
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
-        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None);
-        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None, false);
+        let cxx_impl = cxx_fn.as_cxx_impl(&IndexSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
@@ -994,14 +1068,14 @@ mod ffi_conversion {
     "#,
         )
         .unwrap();
-        let mut gather_sig = GatherSignatures::new([format_ident!("Foo")].into(), None);
+        let mut gather_sig = GatherSignatures::new([gen_struct("Foo")].into(), None);
         gather_sig.visit_file(&parsed_file);
         let mut cxx_sig = TokenStream::new();
         for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
             assert!(ty_opt.is_none());
             assert_eq!(vec_fn.len(), 1);
             vec_fn[0]
-                .as_cxx_sig(&HashSet::new())
+                .as_cxx_sig(&IndexSet::new())
                 .to_tokens(&mut cxx_sig);
         }
 
@@ -1021,14 +1095,14 @@ mod ffi_conversion {
         )
         .unwrap();
         // no ident since the struct is not public
-        let mut gather_sig = GatherSignatures::new(HashSet::new(), None);
+        let mut gather_sig = GatherSignatures::new(IndexSet::new(), None);
         gather_sig.visit_file(&parsed_file);
         let mut cxx_sig = TokenStream::new();
         for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
             assert!(ty_opt.is_none());
             assert_eq!(vec_fn.len(), 1);
             vec_fn[0]
-                .as_cxx_sig(&HashSet::new())
+                .as_cxx_sig(&IndexSet::new())
                 .to_tokens(&mut cxx_sig);
         }
 
@@ -1046,14 +1120,14 @@ mod ffi_conversion {
     "#,
         )
         .unwrap();
-        let mut gather_sig = GatherSignatures::new([format_ident!("Foo")].into(), None);
+        let mut gather_sig = GatherSignatures::new([gen_struct("Foo")].into(), None);
         gather_sig.visit_file(&parsed_file);
         let mut cxx_sig = TokenStream::new();
         for (ty_opt, vec_fn) in gather_sig.cxx_fn_buf.iter() {
             assert!(ty_opt.is_none());
             assert_eq!(vec_fn.len(), 1);
             vec_fn[0]
-                .as_cxx_sig(&HashSet::new())
+                .as_cxx_sig(&IndexSet::new())
                 .to_tokens(&mut cxx_sig);
         }
 
@@ -1069,8 +1143,8 @@ mod ffi_conversion {
         )
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
-        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None);
-        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None, false);
+        let cxx_impl = cxx_fn.as_cxx_impl(&IndexSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
@@ -1092,8 +1166,8 @@ mod ffi_conversion {
         )
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
-        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None);
-        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None, false);
+        let cxx_impl = cxx_fn.as_cxx_impl(&IndexSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
@@ -1116,8 +1190,8 @@ mod ffi_conversion {
         )
         .unwrap();
         let ty: TypeTest = syn::parse_str("bar::Bar").unwrap();
-        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None);
-        let cxx_impl = cxx_fn.as_cxx_impl(&HashSet::new());
+        let cxx_fn = CxxFn::new(item_fn, Some(ty.0), None, false);
+        let cxx_impl = cxx_fn.as_cxx_impl(&IndexSet::new());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_impl)),
