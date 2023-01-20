@@ -128,7 +128,7 @@ impl StructOrEnum {
         inner_ffi.visit_mut(&mut visitor);
         Self {
             inner: inner_ffi,
-            module: None, // since conversions will be made in the same file, do not use the module
+            module: None // for now use glob import all the ffi module at first, otherwise Some(format_ident!("ffi"))
         }
     }
 
@@ -167,7 +167,9 @@ impl StructOrEnum {
     }
 
     fn original_and_ffi(&self, idents_to_add: &IndexSet<Ident>) -> (Self, Self) {
-        (self.clone(), self.as_ffi(idents_to_add))
+        let mut without_mod = self.clone();
+        without_mod.module = None;
+        (without_mod, self.as_ffi(idents_to_add))
     }
 }
 
@@ -570,7 +572,7 @@ impl<'ast> Visit<'ast> for GatherSignatures {
 
 fn path(ident: &Ident, ident_mod: &Option<Ident>) -> TokenStream {
     if let Some(ref module) = ident_mod {
-        quote!(#module::#ident)
+        quote!(crate::#module::#ident)
     } else {
         quote!(#ident)
     }
@@ -692,7 +694,11 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
-        buf
+        if !buf.is_empty() {
+            quote!(use crate::ffi::*; #buf)
+        } else {
+            buf
+        }
     }
 
     fn generate_ffi_impl(&self) -> TokenStream {
@@ -781,7 +787,7 @@ impl Cxx {
                         #cxx_sig
                     }
             }
-            use cxx_bridge::*;
+            pub use cxx_bridge::*;
             #import_crate
             type Result<T> = ::std::result::Result<T, &'static str>;
 
@@ -840,8 +846,9 @@ mod tests {
         let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
-            "impl From<demo::Foo> for FooFfi {
-    fn from(x: demo::Foo) -> Self {
+            "use crate::ffi::*;
+impl From<Foo> for FooFfi {
+    fn from(x: Foo) -> Self {
         Self {
             n0: x.0.into(),
             n1: x.1.into(),
@@ -850,7 +857,7 @@ mod tests {
             .into()
     }
 }
-impl From<FooFfi> for demo::Foo {
+impl From<FooFfi> for Foo {
     fn from(x: FooFfi) -> Self {
         Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
     }
@@ -866,16 +873,17 @@ impl From<FooFfi> for demo::Foo {
         let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
-            r#"impl From<demo::Citizen> for CitizenFfi {
-    fn from(x: demo::Citizen) -> Self {
+            r#"use crate::ffi::*;
+impl From<Citizen> for CitizenFfi {
+    fn from(x: Citizen) -> Self {
         match x {
-            demo::Citizen::Adult => Self::Adult,
-            demo::Citizen::Minor => Self::Minor,
+            Citizen::Adult => Self::Adult,
+            Citizen::Minor => Self::Minor,
             _ => unreachable!("No variant left"),
         }
     }
 }
-impl From<CitizenFfi> for demo::Citizen {
+impl From<CitizenFfi> for Citizen {
     fn from(x: CitizenFfi) -> Self {
         match x {
             CitizenFfi::Adult => Self::Adult,
@@ -901,16 +909,17 @@ impl From<CitizenFfi> for demo::Citizen {
         let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
-            r#"impl From<demo::Citizen> for CitizenFfi {
-    fn from(x: demo::Citizen) -> Self {
+            r#"use crate::ffi::*;
+impl From<Citizen> for CitizenFfi {
+    fn from(x: Citizen) -> Self {
         match x {
-            demo::Citizen::Adult => Self::Adult,
-            demo::Citizen::Minor => Self::Minor,
+            Citizen::Adult => Self::Adult,
+            Citizen::Minor => Self::Minor,
             _ => unreachable!("No variant left"),
         }
     }
 }
-impl From<CitizenFfi> for demo::Citizen {
+impl From<CitizenFfi> for Citizen {
     fn from(x: CitizenFfi) -> Self {
         match x {
             CitizenFfi::Adult => Self::Adult,
@@ -932,8 +941,9 @@ impl From<CitizenFfi> for demo::Citizen {
         let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
-            "impl From<demo::Foo> for FooFfi {
-    fn from(x: demo::Foo) -> Self {
+            "use crate::ffi::*;
+impl From<Foo> for FooFfi {
+    fn from(x: Foo) -> Self {
         Self {
             n0: x.0.into(),
             n1: x.1.into(),
@@ -942,13 +952,13 @@ impl From<CitizenFfi> for demo::Citizen {
             .into()
     }
 }
-impl From<FooFfi> for demo::Foo {
+impl From<FooFfi> for Foo {
     fn from(x: FooFfi) -> Self {
         Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
     }
 }
-impl From<demo::Bar> for BarFfi {
-    fn from(x: demo::Bar) -> Self {
+impl From<Bar> for BarFfi {
+    fn from(x: Bar) -> Self {
         Self {
             x: x.x.into(),
             y: x.y.into(),
@@ -956,7 +966,7 @@ impl From<demo::Bar> for BarFfi {
             .into()
     }
 }
-impl From<BarFfi> for demo::Bar {
+impl From<BarFfi> for Bar {
     fn from(x: BarFfi) -> Self {
         Self {
             x: x.x.into(),
