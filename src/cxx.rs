@@ -669,17 +669,7 @@ impl Cxx {
             .to_tokens(&mut buf);
             trace!("Finished conversion impl of {}", ffi.ident());
         }
-        // only add the `ffi_conversion` module if there is something to include in it
-        if !buf.is_empty() {
-            quote!(
-                /// Auto-generated code with `cargo-extern-fn`
-                mod ffi_conversion {
-                use super::*;
-                #buf
-            })
-        } else {
-            TokenStream::new()
-        }
+        buf
     }
 
     fn generate_ffi_impl(&self) -> TokenStream {
@@ -827,23 +817,19 @@ mod tests {
         let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
-            "/// Auto-generated code with `cargo-extern-fn`
-mod ffi_conversion {
-    use super::*;
-    impl From<demo::Foo> for FooFfi {
-        fn from(x: demo::Foo) -> Self {
-            Self {
-                n0: x.0.into(),
-                n1: x.1.into(),
-                n2: x.2.into(),
-            }
-                .into()
+            "impl From<demo::Foo> for FooFfi {
+    fn from(x: demo::Foo) -> Self {
+        Self {
+            n0: x.0.into(),
+            n1: x.1.into(),
+            n2: x.2.into(),
         }
+            .into()
     }
-    impl From<FooFfi> for demo::Foo {
-        fn from(x: FooFfi) -> Self {
-            Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
-        }
+}
+impl From<FooFfi> for demo::Foo {
+    fn from(x: FooFfi) -> Self {
+        Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
     }
 }
 "
@@ -857,25 +843,21 @@ mod ffi_conversion {
         let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
-            r#"/// Auto-generated code with `cargo-extern-fn`
-mod ffi_conversion {
-    use super::*;
-    impl From<demo::Citizen> for CitizenFfi {
-        fn from(x: demo::Citizen) -> Self {
-            match x {
-                demo::Citizen::Adult => Self::Adult,
-                demo::Citizen::Minor => Self::Minor,
-                _ => unreachable!("No variant left"),
-            }
+            r#"impl From<demo::Citizen> for CitizenFfi {
+    fn from(x: demo::Citizen) -> Self {
+        match x {
+            demo::Citizen::Adult => Self::Adult,
+            demo::Citizen::Minor => Self::Minor,
+            _ => unreachable!("No variant left"),
         }
     }
-    impl From<CitizenFfi> for demo::Citizen {
-        fn from(x: CitizenFfi) -> Self {
-            match x {
-                CitizenFfi::Adult => Self::Adult,
-                CitizenFfi::Minor => Self::Minor,
-                _ => unreachable!("No variant left"),
-            }
+}
+impl From<CitizenFfi> for demo::Citizen {
+    fn from(x: CitizenFfi) -> Self {
+        match x {
+            CitizenFfi::Adult => Self::Adult,
+            CitizenFfi::Minor => Self::Minor,
+            _ => unreachable!("No variant left"),
         }
     }
 }
@@ -896,25 +878,21 @@ mod ffi_conversion {
         let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
-            r#"/// Auto-generated code with `cargo-extern-fn`
-mod ffi_conversion {
-    use super::*;
-    impl From<demo::Citizen> for CitizenFfi {
-        fn from(x: demo::Citizen) -> Self {
-            match x {
-                demo::Citizen::Adult => Self::Adult,
-                demo::Citizen::Minor => Self::Minor,
-                _ => unreachable!("No variant left"),
-            }
+            r#"impl From<demo::Citizen> for CitizenFfi {
+    fn from(x: demo::Citizen) -> Self {
+        match x {
+            demo::Citizen::Adult => Self::Adult,
+            demo::Citizen::Minor => Self::Minor,
+            _ => unreachable!("No variant left"),
         }
     }
-    impl From<CitizenFfi> for demo::Citizen {
-        fn from(x: CitizenFfi) -> Self {
-            match x {
-                CitizenFfi::Adult => Self::Adult,
-                CitizenFfi::Minor => Self::Minor,
-                _ => unreachable!("No variant left"),
-            }
+}
+impl From<CitizenFfi> for demo::Citizen {
+    fn from(x: CitizenFfi) -> Self {
+        match x {
+            CitizenFfi::Adult => Self::Adult,
+            CitizenFfi::Minor => Self::Minor,
+            _ => unreachable!("No variant left"),
         }
     }
 }
@@ -931,41 +909,37 @@ mod ffi_conversion {
         let conv = cxx.ffi_conversion(&file, false, format_ident!("demo"));
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#conv)),
-            "/// Auto-generated code with `cargo-extern-fn`
-mod ffi_conversion {
-    use super::*;
-    impl From<demo::Foo> for FooFfi {
-        fn from(x: demo::Foo) -> Self {
-            Self {
-                n0: x.0.into(),
-                n1: x.1.into(),
-                n2: x.2.into(),
-            }
-                .into()
+            "impl From<demo::Foo> for FooFfi {
+    fn from(x: demo::Foo) -> Self {
+        Self {
+            n0: x.0.into(),
+            n1: x.1.into(),
+            n2: x.2.into(),
         }
+            .into()
     }
-    impl From<FooFfi> for demo::Foo {
-        fn from(x: FooFfi) -> Self {
-            Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
-        }
+}
+impl From<FooFfi> for demo::Foo {
+    fn from(x: FooFfi) -> Self {
+        Self(x.n0.into(), x.n1.into(), x.n2.into()).into()
     }
-    impl From<demo::Bar> for BarFfi {
-        fn from(x: demo::Bar) -> Self {
-            Self {
-                x: x.x.into(),
-                y: x.y.into(),
-            }
-                .into()
+}
+impl From<demo::Bar> for BarFfi {
+    fn from(x: demo::Bar) -> Self {
+        Self {
+            x: x.x.into(),
+            y: x.y.into(),
         }
+            .into()
     }
-    impl From<BarFfi> for demo::Bar {
-        fn from(x: BarFfi) -> Self {
-            Self {
-                x: x.x.into(),
-                y: x.y.into(),
-            }
-                .into()
+}
+impl From<BarFfi> for demo::Bar {
+    fn from(x: BarFfi) -> Self {
+        Self {
+            x: x.x.into(),
+            y: x.y.into(),
         }
+            .into()
     }
 }
 "
