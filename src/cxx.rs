@@ -21,7 +21,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
     attrs, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip, method_self_type,
-    normalise_receiver_arg, return_contains_ref, AddSuffix, SelfType,
+    normalise_receiver_arg, return_contains_ref, AddSuffix, SelfType, result_without_error,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -279,6 +279,7 @@ impl CxxFn {
         cxx_sig.unsafety = None;
         cxx_sig.constness = None;
         cxx_sig.ident = self.cxx_ident();
+        // Options are not supported by cxx, convert them to result
         if self.return_is_opt {
             if let ReturnType::Type(_, ref mut ty) = cxx_sig.output {
                 if let Type::Path(ref mut p) = **ty {
@@ -316,6 +317,12 @@ impl CxxFn {
                 *arg = normalised_arg;
             }
         }
+        // We need to remove the error side of Result<T, E> to be accepted on the bridge
+        if let ReturnType::Type(_, ref mut ty) = cxx_sig.output {
+            let unboxed_ty = *ty.clone();
+            **ty = result_without_error(unboxed_ty);
+        }
+
         quote!(#cxx_sig;)
     }
 
@@ -346,11 +353,17 @@ impl CxxFn {
 
         let mut call_fn = if let Some(self_type) = self_type_opt.as_ref() {
             let ty_ = self.ty.as_ref().expect("No type defined in method");
-            let self_ident = if self.is_from_enum {format_ident!("self_")} else {format_ident!("self")};
+            let self_ident = if self.is_from_enum {
+                format_ident!("self_")
+            } else {
+                format_ident!("self")
+            };
             match self_type {
-                SelfType::Value => {
-                    call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(#self_ident.into()))
-                }
+                SelfType::Value => call_function_from_sig(
+                    self.ty.as_ref(),
+                    &self.item_fn.sig,
+                    quote!(#self_ident.into()),
+                ),
                 SelfType::ValueMut => {
                     call_function_from_sig(self.ty.as_ref(), &self.item_fn.sig, quote!(x))
                 }
@@ -913,6 +926,23 @@ mod ffi_conversion {
         assert_eq!(
             format!("{cxx_sig}"),
             "fn get_ident_as_function_ffi (ty : & Type) -> Ident"
+        )
+    }
+
+    #[test]
+    fn test_cxx_sig_result() {
+        let item_fn = syn::parse_str(
+            r#"pub fn get_ident_as_function(ty: &Type) -> Result<usize, ()> {
+    todo!()
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_sig = cxx_fn.as_cxx_bridge_sig(&IndexSet::new()).to_token_stream();
+
+        assert_eq!(
+            format!("{cxx_sig}"),
+            "fn get_ident_as_function_ffi (ty : & Type) -> Result < usize > ;"
         )
     }
 

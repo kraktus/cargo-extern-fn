@@ -3,11 +3,13 @@ use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
+use syn::parse;
 use syn::parse::Parse;
 use syn::visit;
 use syn::visit::Visit;
 use syn::visit_mut;
 use syn::visit_mut::VisitMut;
+use syn::PathArguments;
 use syn::ReturnType;
 
 use syn::Pat;
@@ -160,7 +162,7 @@ pub fn normalise_receiver_arg(
 // from: https://github.com/bcpeinhardt/formulaY/blob/525f34fa15e0add50e402360f06a36fd0fb3711c/src/util.rs#L6
 // Return whether a type matches a given &str
 // /!\ Always return `false` if it has a len() > 1 (eg. std::fmt::..)
-pub fn is_type(type_as_str: &str, ty: &syn::Type) -> bool {
+pub fn is_type(type_as_str: &str, ty: &Type) -> bool {
     if let syn::Type::Path(ref p) = ty {
         p.path.segments.len() == 1 && p.path.segments[0].ident == type_as_str
     } else {
@@ -172,6 +174,25 @@ pub fn is_method(sig: &Signature) -> bool {
     sig.inputs
         .iter()
         .any(|arg| matches!(arg, FnArg::Receiver(_)))
+}
+
+// given `Result<A, B>`, returns `Result<A>`. If not a result, return itself
+pub fn result_without_error(ty: Type) -> Type {
+    if is_type("Result", &ty) {
+        if let syn::Type::Path(ref p) = ty {
+            if let PathArguments::AngleBracketed(ref args) = p.path.segments[0].arguments {
+                let first_arg = &args.args[0];
+                syn::parse2(quote!(Result<#first_arg>))
+                    .expect("`result_without_error` result parse")
+            } else {
+                panic!("Result args not bracked")
+            }
+        } else {
+            panic!("Result ty not of type path, impossible")
+        }
+    } else {
+        ty
+    }
 }
 
 pub enum SelfType {
@@ -338,6 +359,19 @@ mod tests {
             Some(Ident::new("foo_gen_", Span::call_site())),
             get_ident_as_function(&ty)
         )
+    }
+
+    #[test]
+    fn test_result_without_error() {
+        for (input, output) in [
+            ("Result<T, E>", "Result<T>"),
+            ("foo::Foo", "foo::Foo"),
+            ("Result<foo::Foo, e::E>", "Result<foo::Foo>"),
+        ] {
+            println!("input {input}, expected output {output}");
+            let ty: Type = syn::parse_str(input).unwrap();
+            assert_eq!(result_without_error(ty), syn::parse_str(output).unwrap())
+        }
     }
 
     #[test]
