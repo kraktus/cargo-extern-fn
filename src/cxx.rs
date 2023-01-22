@@ -743,7 +743,7 @@ impl Cxx {
         module: Ident,
         dry: bool,
     ) {
-        let module_opt = (!dry && module != format_ident!("lib")).then(|| module);
+        let module_opt = (!dry && module != format_ident!("lib")).then_some(module);
         trace!("Starting GatherDataStructures pass");
         let mut gather_ds = GatherDataStructures::new(module_opt.clone());
         gather_ds.visit_file(parsed_file);
@@ -761,7 +761,7 @@ impl Cxx {
     // once all files have been parsed once, add the conversion between
     // the ffi data_struct and original struct
     pub fn ffi_conversion(&self, parsed_file: &syn::File, dry: bool, module: Ident) -> TokenStream {
-        let module_opt = (!dry && module != format_ident!("lib")).then(|| module);
+        let module_opt = (!dry && module != format_ident!("lib")).then_some(module);
         // need to get the idents declared in this file
         let mut gather_ds = GatherDataStructures::new(module_opt);
         gather_ds.visit_file(parsed_file);
