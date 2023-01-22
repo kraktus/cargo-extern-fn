@@ -1,13 +1,11 @@
-use std::collections::HashMap;
-
 use std::fs::{DirEntry, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 
-use log::trace;
+use log::{trace, warn};
 use proc_macro2::{Span, TokenStream};
 
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::visit_mut::VisitMut;
@@ -20,15 +18,34 @@ use syn::{ItemEnum, ItemStruct, Visibility};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
-    attrs, contains_tuple, get_ident, get_ident_as_function, is_method, meta_is_extern_fn_skip,
-    method_self_type, normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix,
-    SelfType, add_suffix,
+    add_suffix, attrs, contains_tuple, get_ident, get_ident_as_function, is_method,
+    meta_is_extern_fn_skip, method_self_type, normalise_receiver_arg, result_without_error,
+    return_contains_ref, AddSuffix, SelfType,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
+type AllCxxFn = IndexMap<Option<Type>, Vec<CxxFn>>;
+
+// We cannot use the default `extend` to merge fns because for the same key (eg None, all free functions)
+// we want to merge the values
+fn merge(buf: &mut AllCxxFn, x: AllCxxFn) {
+    // first we merge all entries which have a type in common
+    // we use a Vec because for the same type there should never have two functions with
+    // the same name
+    for (key, value) in buf.iter_mut() {
+        value.extend(x.get(key).cloned().unwrap_or_default());
+    }
+    // now we need to add the new entries
+    for (key, value) in x.into_iter() {
+        if buf.get(&key).is_none() {
+            buf.insert(key, value);
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Cxx {
-    all_cxx_fn: HashMap<Option<Type>, Vec<CxxFn>>,
+    all_cxx_fn: AllCxxFn,
     all_cxx_struct_or_enum: IndexSet<StructOrEnum>, // TODO maybe switch to derive
     all_cxx_idents: IndexSet<Ident>,
 }
@@ -128,7 +145,7 @@ impl StructOrEnum {
         inner_ffi.visit_mut(&mut visitor);
         Self {
             inner: inner_ffi,
-            module: None // for now use glob import all the ffi module at first, otherwise Some(format_ident!("ffi"))
+            module: None, // for now use glob import all the ffi module at first, otherwise Some(format_ident!("ffi"))
         }
     }
 
@@ -252,7 +269,7 @@ struct GatherSignatures {
     // only set if not a trait method
     current_impl_ty: Option<syn::Type>,
     allowed_ds: IndexSet<StructOrEnum>,
-    cxx_fn_buf: HashMap<Option<Type>, Vec<CxxFn>>,
+    cxx_fn_buf: AllCxxFn,
     module: Option<Ident>, // name of the module (only looking at the file for now). `None` if declared in `lib.rs`
 }
 
@@ -384,10 +401,7 @@ impl CxxFn {
     fn as_cxx_bridge_sig(&self, to_be_ffied: &IndexSet<StructOrEnum>) -> TokenStream {
         let mut cxx_sig = self.as_cxx_sig(to_be_ffied);
         for arg in cxx_sig.inputs.iter_mut() {
-            let ffied_ty = self
-                .ty
-                .as_ref()
-                .map(|ty| add_suffix(ty, "Ffi"));
+            let ffied_ty = self.ty.as_ref().map(|ty| add_suffix(ty, "Ffi"));
             if let Some(normalised_arg) = normalise_receiver_arg(arg, ffied_ty, None) {
                 *arg = normalised_arg;
             }
@@ -485,15 +499,12 @@ impl GatherSignatures {
         Self {
             current_impl_ty: None,
             allowed_ds,
-            cxx_fn_buf: HashMap::new(),
+            cxx_fn_buf: IndexMap::new(),
             module,
         }
     }
 
-    fn handle_item_fn(
-        &mut self,
-        item_fn: &ItemFn,
-    ) {
+    fn handle_item_fn(&mut self, item_fn: &ItemFn) {
         if item_fn.sig.asyncness.is_none()
             && item_fn.sig.abi.is_none()
             && matches!(item_fn.vis, Visibility::Public(_))
@@ -511,11 +522,11 @@ impl GatherSignatures {
                 .map(StructOrEnum::is_enum)
                 .unwrap_or_default();
             let cxx_fn = CxxFn::new(
-                    item_fn.clone(),
-                    self.current_impl_ty.clone(),
-                    self.module.clone(),
-                    is_from_enum,
-                );
+                item_fn.clone(),
+                self.current_impl_ty.clone(),
+                self.module.clone(),
+                is_from_enum,
+            );
 
             self.cxx_fn_buf
                 .entry(if cxx_fn.should_be_turned_in_free_fn() {
@@ -742,7 +753,7 @@ impl Cxx {
         let mut gather_sig = GatherSignatures::new(pub_struct_or_enum.clone(), module_opt);
         gather_sig.visit_file(parsed_file);
         trace!("Finished GatherSignatures pass");
-        self.all_cxx_fn.extend(gather_sig.cxx_fn_buf);
+        merge(&mut self.all_cxx_fn, gather_sig.cxx_fn_buf);
         self.all_cxx_idents.extend(idents);
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
     }

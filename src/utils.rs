@@ -95,9 +95,7 @@ pub struct AddSuffixLastSegment<'a> {
 
 impl<'a> AddSuffixLastSegment<'a> {
     pub fn new(suffix: &'a str) -> Self {
-        Self {
-            suffix,
-        }
+        Self { suffix }
     }
 }
 
