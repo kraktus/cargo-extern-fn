@@ -71,6 +71,7 @@ impl CommonArgs {
                                 extension == "rs"
                                     && !self.ignore.contains(&file_name)
                                     && !file_name.contains("ffi")
+                                    && !(file_name == "build.rs")
                             }))
                     .then_some(entry)
                 })
