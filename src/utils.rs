@@ -3,7 +3,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
-use syn::parse;
+
 use syn::parse::Parse;
 use syn::visit;
 use syn::visit::Visit;

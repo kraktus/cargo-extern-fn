@@ -1,8 +1,8 @@
-use std::fs::{DirEntry, File, OpenOptions};
+use std::fs::{OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 
-use log::{trace, warn};
+use log::{trace};
 use proc_macro2::{Span, TokenStream};
 
 use indexmap::{IndexMap, IndexSet};

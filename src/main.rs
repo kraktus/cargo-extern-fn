@@ -1,6 +1,6 @@
 use std::{
-    ffi::{OsStr, OsString},
-    fs::{self, DirEntry, File, OpenOptions},
+    ffi::{OsStr},
+    fs::{DirEntry, File, OpenOptions},
     io::{Read, Write},
     path::PathBuf,
 };
