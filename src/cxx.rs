@@ -541,6 +541,10 @@ impl<'ast> Visit<'ast> for GatherSignatures {
             trace!("Looking at impl of {:?}", get_ident(&item_impl.self_ty));
             visit::visit_item_impl(self, item_impl);
             self.current_impl_ty = outer_impl_ty;
+        } else {
+            let mut item_impl_wo_body = item_impl.clone();
+            item_impl_wo_body.items = vec![];
+            trace!("Skipped {}", format!("{}", quote!(#item_impl_wo_body)))
         }
     }
 
