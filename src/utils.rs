@@ -4,6 +4,7 @@ use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
 
+use syn::parse::Parse;
 use syn::visit;
 use syn::visit::Visit;
 use syn::visit_mut;
@@ -11,7 +12,6 @@ use syn::visit_mut::VisitMut;
 use syn::GenericArgument;
 use syn::PathArguments;
 use syn::ReturnType;
-use syn::parse::Parse;
 
 use syn::Pat;
 use syn::PatIdent;
@@ -187,12 +187,13 @@ pub struct CamelCaseOption;
 impl VisitMut for CamelCaseOption {
     fn visit_type_mut(&mut self, ty: &mut Type) {
         if is_type("Option", ty) {
-            let camel = get_ident_camel_case(ty).expect("Option to have ident").to_string();
+            let camel = get_ident_camel_case(ty)
+                .expect("Option to have ident")
+                .to_string();
             *ty = syn::parse_str(&camel).expect("parsing ident as option type");
         }
     }
 }
-
 
 // return the lower-cased version of the ident of a type, with a trailing `_`
 // the trailing underscore ensure it will not result in a keyword

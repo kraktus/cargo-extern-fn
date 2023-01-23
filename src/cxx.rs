@@ -21,7 +21,8 @@ use crate::utils::{
     add_suffix, add_suffix_last_segment, attrs, contains_tuple, get_ident, get_ident_as_function,
     get_ident_camel_case, get_inner_option_type_enum, get_inner_option_type_sig,
     get_inner_option_type_struct, is_method, meta_is_extern_fn_skip, method_self_type,
-    normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix, SelfType, CamelCaseOption
+    normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix, CamelCaseOption,
+    SelfType,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -145,6 +146,7 @@ impl StructOrEnum {
         };
         let mut visitor = AddSuffix::new("Ffi", idents_to_add);
         inner_ffi.visit_mut(&mut visitor);
+        inner_ffi.visit_mut(&mut CamelCaseOption);
         Self {
             inner: inner_ffi,
             module: None, // for now use glob import all the ffi module at first, otherwise Some(format_ident!("ffi"))
@@ -887,6 +889,22 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_struct_declaration_with_options() {
+        let item_struct: ItemStruct =
+            syn::parse_str(r#"pub struct Foo(Option<usize>, Option<Bar>);"#).unwrap();
+        let struct_ = StructOrEnum::new_struct(item_struct, None);
+        let ffi = struct_.as_ffi(&[format_ident!("Bar")].into());
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#ffi)),
+            "pub struct FooFfi {
+    pub n0: Optionusize,
+    pub n1: OptionBarFfi,
+}
+"
+        )
+    }
+
+    #[test]
     fn test_ffi_struct_conversions() {
         let file: syn::File = syn::parse_str(r#"pub struct Foo(usize, u64, u8);"#).unwrap();
         let cxx = Cxx::default();
@@ -1133,7 +1151,9 @@ impl From<BarFfi> for Bar {
         )
         .unwrap();
         let cxx_fn = CxxFn::new(item_fn, None, None, false);
-        let cxx_sig = cxx_fn.as_cxx_sig(&[gen_struct("Foo")].into()).to_token_stream();
+        let cxx_sig = cxx_fn
+            .as_cxx_sig(&[gen_struct("Foo")].into())
+            .to_token_stream();
 
         assert_eq!(
             format!("{cxx_sig}"),
