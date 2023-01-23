@@ -9,6 +9,7 @@ use syn::visit;
 use syn::visit::Visit;
 use syn::visit_mut;
 use syn::visit_mut::VisitMut;
+use syn::GenericArgument;
 use syn::PathArguments;
 use syn::ReturnType;
 
@@ -64,27 +65,47 @@ pub fn meta_is_extern_fn_skip(meta: syn::Result<Meta>) -> bool {
 }
 
 // return the ident of the type if available
-// if the type contains generics such as `Foo<T>`, scrap them,
-// so in our example it would be converted to `Foo`
+// if the type contains generics such as `Foo<T>`, scrap the brackets
+// so it becomes `Foo_T`
 pub fn get_ident(ty: &Type) -> Option<Ident> {
     if let Type::Path(path_ty) = ty {
-        let mut segs_without_generics = vec![];
+        let mut segs = vec![];
         for p in path_ty.path.segments.iter() {
-            segs_without_generics.push(p.ident.clone().to_string());
-            if !p.arguments.is_none() {
-                break;
+            segs.push(p.ident.to_string());
+            if let PathArguments::AngleBracketed(ref in_brackets) = p.arguments {
+                for generic_arg in in_brackets.args.iter() {
+                    if let GenericArgument::Type(ty) = generic_arg {
+                        if let Some(ident) = get_ident(ty) {
+                            segs.push(ident.to_string())
+                        }
+                    }
+                }
             }
         }
-        let seg_string = segs_without_generics.join("_");
+        let seg_string = segs.join("_");
         Some(syn::parse_str(&seg_string).unwrap())
     } else {
         None
     }
 }
 
-pub fn add_suffix(ty: &Type, suffix: &str) -> Type {
+pub fn get_ident_camel_case(ty: &Type) -> Option<Ident> {
+    get_ident(ty).map(|ident| {
+        let camel = ident.to_string().replace('_', "");
+        format_ident!("{camel}")
+        })
+}
+
+pub fn add_suffix_last_segment(ty: &Type, suffix: &str) -> Type {
     let mut ty_suffixed = ty.clone();
     let mut v = AddSuffixLastSegment::new(suffix);
+    v.visit_type_mut(&mut ty_suffixed);
+    ty_suffixed
+}
+
+pub fn add_suffix(ty: &Type, suffix: &str, idents: &IndexSet<Ident>) -> Type {
+    let mut ty_suffixed = ty.clone();
+    let mut v = AddSuffix::new(suffix, idents);
     v.visit_type_mut(&mut ty_suffixed);
     ty_suffixed
 }
@@ -167,6 +188,29 @@ pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {
         let ident_str = ident.to_string().to_ascii_lowercase();
         format_ident!("{}_", ident_str)
     })
+}
+
+pub fn get_inner_option_type(sig: &Signature) -> IndexSet<Type> {
+    let mut inner_opt = OptionsInnerType::default();
+    inner_opt.visit_signature(sig);
+    inner_opt.0
+}
+
+#[derive(Default)]
+struct OptionsInnerType(pub IndexSet<Type>);
+
+impl<'a> Visit<'a> for OptionsInnerType {
+    fn visit_type_path(&mut self, ty_path: &'a syn::TypePath) {
+        for segment in ty_path.path.segments.iter() {
+            if segment.ident == format_ident!("Option") {
+                if let PathArguments::AngleBracketed(ref in_brackets) = segment.arguments {
+                    if let Some(GenericArgument::Type(ty)) = in_brackets.args.first() {
+                        self.0.insert(ty.clone());
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Convert `&self`, `self`, `&mut self` to
@@ -397,7 +441,7 @@ mod tests {
     fn test_ident() {
         let ty: Type = syn::parse_str("Gen<T>").unwrap();
         assert_eq!(
-            Some(Ident::new("gen_", Span::call_site())),
+            Some(Ident::new("gen_t_", Span::call_site())),
             get_ident_as_function(&ty)
         )
     }
@@ -406,7 +450,7 @@ mod tests {
     fn test_ident2() {
         let ty: Type = syn::parse_str("foo::Gen<T>").unwrap();
         assert_eq!(
-            Some(Ident::new("foo_gen_", Span::call_site())),
+            Some(Ident::new("foo_gen_t_", Span::call_site())),
             get_ident_as_function(&ty)
         )
     }

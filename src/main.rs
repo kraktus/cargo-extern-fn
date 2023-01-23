@@ -1,5 +1,5 @@
 use std::{
-    ffi::{OsStr},
+    ffi::OsStr,
     fs::{DirEntry, File, OpenOptions},
     io::{Read, Write},
     path::PathBuf,

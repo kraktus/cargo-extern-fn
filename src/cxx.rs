@@ -1,8 +1,8 @@
-use std::fs::{OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::Path;
 
-use log::{trace};
+use log::trace;
 use proc_macro2::{Span, TokenStream};
 
 use indexmap::{IndexMap, IndexSet};
@@ -18,9 +18,9 @@ use syn::{ItemEnum, ItemStruct, Visibility};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
-    add_suffix, attrs, contains_tuple, get_ident, get_ident_as_function, is_method,
-    meta_is_extern_fn_skip, method_self_type, normalise_receiver_arg, result_without_error,
-    return_contains_ref, AddSuffix, SelfType,
+    add_suffix, add_suffix_last_segment, attrs, contains_tuple, get_ident, get_ident_as_function,
+    get_inner_option_type, is_method, meta_is_extern_fn_skip, method_self_type,
+    normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix, SelfType,
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -47,7 +47,8 @@ fn merge(buf: &mut AllCxxFn, x: AllCxxFn) {
 pub struct Cxx {
     all_cxx_fn: AllCxxFn,
     all_cxx_struct_or_enum: IndexSet<StructOrEnum>, // TODO maybe switch to derive
-    all_cxx_idents: IndexSet<Ident>,
+    all_cxx_idents: IndexSet<Ident>,                // idents of the structs/enums
+    all_options: IndexSet<Type>,
 }
 
 fn as_idents(s_e: &IndexSet<StructOrEnum>) -> IndexSet<Ident> {
@@ -271,6 +272,7 @@ struct GatherSignatures {
     allowed_ds: IndexSet<StructOrEnum>,
     cxx_fn_buf: AllCxxFn,
     module: Option<Ident>, // name of the module (only looking at the file for now). `None` if declared in `lib.rs`
+    options: IndexSet<Type>, // type of options declared in the functions signature
 }
 
 #[derive(Debug, Clone)]
@@ -401,7 +403,10 @@ impl CxxFn {
     fn as_cxx_bridge_sig(&self, to_be_ffied: &IndexSet<StructOrEnum>) -> TokenStream {
         let mut cxx_sig = self.as_cxx_sig(to_be_ffied);
         for arg in cxx_sig.inputs.iter_mut() {
-            let ffied_ty = self.ty.as_ref().map(|ty| add_suffix(ty, "Ffi"));
+            let ffied_ty = self
+                .ty
+                .as_ref()
+                .map(|ty| add_suffix_last_segment(ty, "Ffi"));
             if let Some(normalised_arg) = normalise_receiver_arg(arg, ffied_ty, None) {
                 *arg = normalised_arg;
             }
@@ -501,6 +506,7 @@ impl GatherSignatures {
             allowed_ds,
             cxx_fn_buf: IndexMap::new(),
             module,
+            options: IndexSet::new(),
         }
     }
 
@@ -515,6 +521,7 @@ impl GatherSignatures {
         // no supported by the bridge
         {
             trace!("handling fn {:?}", item_fn.sig.ident);
+            self.options.extend(get_inner_option_type(&item_fn.sig));
             let is_from_enum = self
                 .current_impl_ty
                 .as_ref()
@@ -581,6 +588,14 @@ impl<'ast> Visit<'ast> for GatherSignatures {
 
         visit::visit_impl_item_method(self, item_method);
     }
+}
+
+fn gen_options_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident>) -> TokenStream {
+    let mut buf = TokenStream::new();
+    for inner_ty in all_options.iter() {
+        let suffixed = add_suffix(inner_ty, "Ffi", all_cxx_idents);
+    }
+    todo!()
 }
 
 fn path(ident: &Ident, ident_mod: &Option<Ident>) -> TokenStream {
@@ -755,6 +770,7 @@ impl Cxx {
         trace!("Finished GatherSignatures pass");
         merge(&mut self.all_cxx_fn, gather_sig.cxx_fn_buf);
         self.all_cxx_idents.extend(idents);
+        self.all_options.extend(gather_sig.options);
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
     }
 
