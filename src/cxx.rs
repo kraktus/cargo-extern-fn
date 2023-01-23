@@ -21,7 +21,7 @@ use crate::utils::{
     add_suffix, add_suffix_last_segment, attrs, contains_tuple, get_ident, get_ident_as_function,
     get_ident_camel_case, get_inner_option_type_enum, get_inner_option_type_sig,
     get_inner_option_type_struct, is_method, meta_is_extern_fn_skip, method_self_type,
-    normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix, SelfType,
+    normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix, SelfType, CamelCaseOption
 };
 use crate::utils::{call_function_from_sig, is_type};
 
@@ -400,6 +400,7 @@ impl CxxFn {
         let idents = as_idents(to_be_ffied);
         let mut visitor = AddSuffix::new("Ffi", &idents);
         visitor.visit_signature_mut(&mut cxx_sig);
+        CamelCaseOption.visit_signature_mut(&mut cxx_sig); // important! to be done after adding the suffix
 
         cxx_sig
     }
@@ -604,7 +605,7 @@ fn gen_options_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident
             get_ident_camel_case(&suffixed).expect("inner ty of option has ident")
         );
         quote!(pub struct #option_ident {
-            pub inner: suffixed,
+            pub inner: #suffixed,
             pub is_empty: bool,
         })
         .to_tokens(&mut buf)
@@ -881,7 +882,7 @@ mod tests {
         let file: syn::File = syn::parse_str(r#"pub struct S; pub enum E{}"#).unwrap();
         let mut gather_ds = GatherDataStructures::default();
         gather_ds.visit_file(&file);
-        let (struct_or_enum, _) = gather_ds.results();
+        let (struct_or_enum, _, _) = gather_ds.results();
         assert!(struct_or_enum.is_empty())
     }
 
@@ -1120,6 +1121,23 @@ impl From<BarFfi> for Bar {
         assert_eq!(
             format!("{cxx_sig}"),
             "fn get_ident_as_function_ffi (ty : & Type) -> Result < Ident >"
+        )
+    }
+
+    #[test]
+    fn test_cxx_sig_opt_argument() {
+        let item_fn = syn::parse_str(
+            r#"pub fn get_ident_as_function(simple: Option<u8>, nested: Option<Foo>) -> u64 {
+    todo!()
+    }"#,
+        )
+        .unwrap();
+        let cxx_fn = CxxFn::new(item_fn, None, None, false);
+        let cxx_sig = cxx_fn.as_cxx_sig(&[gen_struct("Foo")].into()).to_token_stream();
+
+        assert_eq!(
+            format!("{cxx_sig}"),
+            "fn get_ident_as_function_ffi (simple : Optionu8 , nested : OptionFooFfi) -> u64"
         )
     }
 
