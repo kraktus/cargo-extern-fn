@@ -4,7 +4,6 @@ use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
 
-use syn::parse::Parse;
 use syn::visit;
 use syn::visit::Visit;
 use syn::visit_mut;
@@ -93,7 +92,7 @@ pub fn get_ident_camel_case(ty: &Type) -> Option<Ident> {
     get_ident(ty).map(|ident| {
         let camel = ident.to_string().replace('_', "");
         format_ident!("{camel}")
-        })
+    })
 }
 
 pub fn add_suffix_last_segment(ty: &Type, suffix: &str) -> Type {
@@ -190,9 +189,21 @@ pub fn get_ident_as_function(ty: &Type) -> Option<Ident> {
     })
 }
 
-pub fn get_inner_option_type(sig: &Signature) -> IndexSet<Type> {
+pub fn get_inner_option_type_sig(sig: &Signature) -> IndexSet<Type> {
     let mut inner_opt = OptionsInnerType::default();
     inner_opt.visit_signature(sig);
+    inner_opt.0
+}
+
+pub fn get_inner_option_type_enum(enum_: &ItemEnum) -> IndexSet<Type> {
+    let mut inner_opt = OptionsInnerType::default();
+    inner_opt.visit_item_enum(enum_);
+    inner_opt.0
+}
+
+pub fn get_inner_option_type_struct(struct_: &ItemStruct) -> IndexSet<Type> {
+    let mut inner_opt = OptionsInnerType::default();
+    inner_opt.visit_item_struct(struct_);
     inner_opt.0
 }
 

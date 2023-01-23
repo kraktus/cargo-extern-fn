@@ -19,7 +19,8 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::utils::{
     add_suffix, add_suffix_last_segment, attrs, contains_tuple, get_ident, get_ident_as_function,
-    get_inner_option_type, is_method, meta_is_extern_fn_skip, method_self_type,
+    get_ident_camel_case, get_inner_option_type_enum, get_inner_option_type_sig,
+    get_inner_option_type_struct, is_method, meta_is_extern_fn_skip, method_self_type,
     normalise_receiver_arg, result_without_error, return_contains_ref, AddSuffix, SelfType,
 };
 use crate::utils::{call_function_from_sig, is_type};
@@ -196,6 +197,7 @@ struct GatherDataStructures {
     pub_struct_or_enum: IndexSet<StructOrEnum>,
     idents: IndexSet<Ident>, // idents of struct/enums. TODO union?
     module: Option<Ident>,
+    options: IndexSet<Type>, // options included in the data-structure definition
 }
 
 impl GatherDataStructures {
@@ -206,13 +208,14 @@ impl GatherDataStructures {
         }
     }
 
-    fn results(self) -> (IndexSet<StructOrEnum>, IndexSet<Ident>) {
+    fn results(self) -> (IndexSet<StructOrEnum>, IndexSet<Ident>, IndexSet<Type>) {
         let Self {
             pub_struct_or_enum,
             idents,
+            options,
             ..
         } = self;
-        (pub_struct_or_enum, idents)
+        (pub_struct_or_enum, idents, options)
     }
 }
 
@@ -228,6 +231,7 @@ impl<'ast> Visit<'ast> for GatherDataStructures {
                 struct_.clone(),
                 self.module.clone(),
             ));
+            self.options.extend(get_inner_option_type_struct(struct_));
             self.idents.insert(struct_.ident.clone());
         }
         visit::visit_item_struct(self, struct_);
@@ -243,6 +247,7 @@ impl<'ast> Visit<'ast> for GatherDataStructures {
                 .all(|v| matches!(v.fields, Fields::Unit))
         {
             self.idents.insert(enum_.ident.clone());
+            self.options.extend(get_inner_option_type_enum(enum_));
             self.pub_struct_or_enum
                 .insert(StructOrEnum::new_enum(enum_.clone(), self.module.clone()));
         }
@@ -521,7 +526,7 @@ impl GatherSignatures {
         // no supported by the bridge
         {
             trace!("handling fn {:?}", item_fn.sig.ident);
-            self.options.extend(get_inner_option_type(&item_fn.sig));
+            self.options.extend(get_inner_option_type_sig(&item_fn.sig));
             let is_from_enum = self
                 .current_impl_ty
                 .as_ref()
@@ -594,8 +599,17 @@ fn gen_options_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident
     let mut buf = TokenStream::new();
     for inner_ty in all_options.iter() {
         let suffixed = add_suffix(inner_ty, "Ffi", all_cxx_idents);
+        let option_ident = format_ident!(
+            "Option{}",
+            get_ident_camel_case(&suffixed).expect("inner ty of option has ident")
+        );
+        quote!(pub struct #option_ident {
+            pub inner: suffixed,
+            pub is_empty: bool,
+        })
+        .to_tokens(&mut buf)
     }
-    todo!()
+    buf
 }
 
 fn path(ident: &Ident, ident_mod: &Option<Ident>) -> TokenStream {
@@ -763,13 +777,14 @@ impl Cxx {
         let mut gather_ds = GatherDataStructures::new(module_opt.clone());
         gather_ds.visit_file(parsed_file);
         trace!("Finished GatherDataStructures pass");
-        let (pub_struct_or_enum, idents) = gather_ds.results();
+        let (pub_struct_or_enum, idents, options) = gather_ds.results();
         trace!("Starting GatherSignatures pass");
         let mut gather_sig = GatherSignatures::new(pub_struct_or_enum.clone(), module_opt);
         gather_sig.visit_file(parsed_file);
         trace!("Finished GatherSignatures pass");
         merge(&mut self.all_cxx_fn, gather_sig.cxx_fn_buf);
         self.all_cxx_idents.extend(idents);
+        self.all_options.extend(options);
         self.all_options.extend(gather_sig.options);
         self.all_cxx_struct_or_enum.extend(pub_struct_or_enum);
     }
@@ -781,7 +796,7 @@ impl Cxx {
         // need to get the idents declared in this file
         let mut gather_ds = GatherDataStructures::new(module_opt);
         gather_ds.visit_file(parsed_file);
-        let (struct_or_enum, _) = gather_ds.results();
+        let (struct_or_enum, _, _) = gather_ds.results();
         self.generate_ffi_conversions(struct_or_enum, dry)
     }
 
@@ -796,6 +811,7 @@ impl Cxx {
         file.read_to_string(&mut src_file)
             .expect("Unable to read file");
         let cxx_struct_declarations = self.generate_cxx_types();
+        let cxx_options_declarations = gen_options_ffi(&self.all_options, &self.all_cxx_idents);
         let cxx_sig = self.generate_cxx_signatures();
         let ffi_impl = self.generate_ffi_impl();
         // only need import when not in the same file
@@ -811,6 +827,7 @@ impl Cxx {
             #[cxx::bridge]
             pub mod cxx_bridge {
                 #cxx_struct_declarations
+                #cxx_options_declarations
 
                     extern "Rust" {
                         #cxx_sig

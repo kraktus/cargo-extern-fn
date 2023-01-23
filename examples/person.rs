@@ -7,6 +7,11 @@ impl Age {
     }
 }
 
+pub struct PassePort {
+    id: Option<u64>,
+    age: Option<Age>,
+}
+
 // this is a comment
 #[derive(Clone)]
 pub struct Person {
