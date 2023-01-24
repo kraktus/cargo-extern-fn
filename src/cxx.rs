@@ -607,7 +607,7 @@ fn gen_options_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident
             get_ident_camel_case(&suffixed).expect("inner ty of option has ident")
         );
         quote!(pub struct #option_ident {
-            pub inner: #suffixed,
+            pub inner: ::std::mem::MaybeUninit<#suffixed>,
             pub is_empty: bool,
         })
         .to_tokens(&mut buf)
@@ -1217,6 +1217,25 @@ impl From<BarFfi> for Bar {
             "pub fn unsafe_foo_ffi(u: usize) -> usize {
     let res = unsafe { foo(u.into()) };
     res.into()
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_cxx_gen_options() {
+        let options = IndexSet::from([gen_ty("Foo"), gen_ty("u8")]);
+        let cxx_options_ffi = gen_options_ffi(&options, &[format_ident!("Foo")].into());
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_options_ffi)),
+            "pub struct OptionFooFfi {
+    pub inner: ::std::mem::MaybeUninit<FooFfi>,
+    pub is_empty: bool,
+}
+pub struct Optionu8 {
+    pub inner: ::std::mem::MaybeUninit<u8>,
+    pub is_empty: bool,
 }
 "
         )
