@@ -615,6 +615,26 @@ fn gen_options_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident
     buf
 }
 
+fn gen_options_drop_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident>) -> TokenStream {
+    let mut buf = TokenStream::new();
+    for inner_ty in all_options.iter() {
+        let suffixed = add_suffix(inner_ty, "Ffi", all_cxx_idents);
+        let option_ident = format_ident!(
+            "Option{}",
+            get_ident_camel_case(&suffixed).expect("inner ty of option has ident")
+        );
+        quote!(impl Drop for #option_ident {
+            fn drop(&mut self) {
+                if !self.is_empty {
+                    unsafe { self.inner.assume_init_drop() }
+                }
+            }
+        })
+        .to_tokens(&mut buf)
+    }
+    buf
+}
+
 fn path(ident: &Ident, ident_mod: &Option<Ident>) -> TokenStream {
     if let Some(ref module) = ident_mod {
         quote!(crate::#module::#ident)
@@ -815,6 +835,7 @@ impl Cxx {
             .expect("Unable to read file");
         let cxx_struct_declarations = self.generate_cxx_types();
         let cxx_options_declarations = gen_options_ffi(&self.all_options, &self.all_cxx_idents);
+        let cxx_options_drop = gen_options_drop_ffi(&self.all_options, &self.all_cxx_idents);
         let cxx_sig = self.generate_cxx_signatures();
         let ffi_impl = self.generate_ffi_impl();
         // only need import when not in the same file
@@ -839,6 +860,7 @@ impl Cxx {
             pub use cxx_bridge::*;
             #import_crate
             type Result<T> = ::std::result::Result<T, &'static str>;
+            #cxx_options_drop
 
             #ffi_impl
         ));
@@ -1223,7 +1245,7 @@ impl From<BarFfi> for Bar {
     }
 
     #[test]
-    fn test_cxx_gen_options() {
+    fn test_cxx_gen_options_declaration() {
         let options = IndexSet::from([gen_ty("Foo"), gen_ty("u8")]);
         let cxx_options_ffi = gen_options_ffi(&options, &[format_ident!("Foo")].into());
 
@@ -1236,6 +1258,31 @@ impl From<BarFfi> for Bar {
 pub struct Optionu8 {
     pub inner: ::std::mem::MaybeUninit<u8>,
     pub is_empty: bool,
+}
+"
+        )
+    }
+
+    #[test]
+    fn test_cxx_gen_options_drop() {
+        let options = IndexSet::from([gen_ty("Foo"), gen_ty("u8")]);
+        let cxx_options_ffi = gen_options_drop_ffi(&options, &[format_ident!("Foo")].into());
+
+        assert_eq!(
+            prettyplease::unparse(&parse_quote!(#cxx_options_ffi)),
+            "impl Drop for OptionFooFfi {
+    fn drop(&mut self) {
+        if !self.is_empty {
+            unsafe { self.inner.assume_init_drop() }
+        }
+    }
+}
+impl Drop for Optionu8 {
+    fn drop(&mut self) {
+        if !self.is_empty {
+            unsafe { self.inner.assume_init_drop() }
+        }
+    }
 }
 "
         )
