@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::Path;
 
-use log::trace;
+use log::{error, trace};
 use proc_macro2::{Span, TokenStream};
 
 use indexmap::{IndexMap, IndexSet};
@@ -607,7 +607,7 @@ fn gen_options_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident
             get_ident_camel_case(&suffixed).expect("inner ty of option has ident")
         );
         quote!(pub struct #option_ident {
-            pub inner: ::std::mem::MaybeUninit<#suffixed>,
+            pub inner: #suffixed,
             pub is_empty: bool,
         })
         .to_tokens(&mut buf)
@@ -615,19 +615,44 @@ fn gen_options_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident
     buf
 }
 
-fn gen_options_drop_ffi(all_options: &IndexSet<Type>, all_cxx_idents: &IndexSet<Ident>) -> TokenStream {
+fn gen_options_conversions_ffi(
+    all_options: &IndexSet<Type>,
+    all_cxx_idents: &IndexSet<Ident>,
+) -> TokenStream {
     let mut buf = TokenStream::new();
-    for inner_ty in all_options.iter() {
-        let suffixed = add_suffix(inner_ty, "Ffi", all_cxx_idents);
+    for original_ty in all_options.iter() {
+        let suffixed = add_suffix(original_ty, "Ffi", all_cxx_idents);
+        if is_type("String", &suffixed) {
+            error!("`String` type is not Zeroable, Option<String> <-> OptionStringFfi is UB")
+        }
         let option_ident = format_ident!(
             "Option{}",
             get_ident_camel_case(&suffixed).expect("inner ty of option has ident")
         );
-        quote!(impl Drop for #option_ident {
-            fn drop(&mut self) {
-                if !self.is_empty {
-                    unsafe { self.inner.assume_init_drop() }
+        quote!(
+        impl From<Option<#original_ty>> for #option_ident {
+            fn from(opt: Option<#original_ty>) -> Self {
+                if let Some(inner) = opt {
+                    Self {
+                        inner: inner.into(),
+                        is_empty: false,
+                    }
+                } else {
+                    Self {
+                        /// # Safety
+                        ///
+                        /// This type should implement `bytemuck::Zeroable` trait. It's up to the user
+                        /// to check it.
+                        inner: unsafe { ::std::mem::zeroed() },
+                        is_empty: true,
+                    }
                 }
+            }
+        }
+
+        impl From<#option_ident> for Option<#original_ty> {
+            fn from(opt_ffi: #option_ident) -> Self {
+                if opt_ffi.is_empty { None } else { Some(opt_ffi.inner.into()) }
             }
         })
         .to_tokens(&mut buf)
@@ -835,7 +860,8 @@ impl Cxx {
             .expect("Unable to read file");
         let cxx_struct_declarations = self.generate_cxx_types();
         let cxx_options_declarations = gen_options_ffi(&self.all_options, &self.all_cxx_idents);
-        let cxx_options_drop = gen_options_drop_ffi(&self.all_options, &self.all_cxx_idents);
+        let cxx_options_conversions =
+            gen_options_conversions_ffi(&self.all_options, &self.all_cxx_idents);
         let cxx_sig = self.generate_cxx_signatures();
         let ffi_impl = self.generate_ffi_impl();
         // only need import when not in the same file
@@ -860,8 +886,8 @@ impl Cxx {
             pub use cxx_bridge::*;
             #import_crate
             type Result<T> = ::std::result::Result<T, &'static str>;
-            #cxx_options_drop
 
+            #cxx_options_conversions
             #ffi_impl
         ));
         if dry {
@@ -1252,11 +1278,11 @@ impl From<BarFfi> for Bar {
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_options_ffi)),
             "pub struct OptionFooFfi {
-    pub inner: ::std::mem::MaybeUninit<FooFfi>,
+    pub inner: FooFfi,
     pub is_empty: bool,
 }
 pub struct Optionu8 {
-    pub inner: ::std::mem::MaybeUninit<u8>,
+    pub inner: u8,
     pub is_empty: bool,
 }
 "
@@ -1264,24 +1290,58 @@ pub struct Optionu8 {
     }
 
     #[test]
-    fn test_cxx_gen_options_drop() {
+    fn test_cxx_gen_options_conversions() {
         let options = IndexSet::from([gen_ty("Foo"), gen_ty("u8")]);
-        let cxx_options_ffi = gen_options_drop_ffi(&options, &[format_ident!("Foo")].into());
+        let cxx_options_ffi = gen_options_conversions_ffi(&options, &[format_ident!("Foo")].into());
 
         assert_eq!(
             prettyplease::unparse(&parse_quote!(#cxx_options_ffi)),
-            "impl Drop for OptionFooFfi {
-    fn drop(&mut self) {
-        if !self.is_empty {
-            unsafe { self.inner.assume_init_drop() }
+            "impl From<Option<Foo>> for OptionFooFfi {
+    fn from(opt: Option<Foo>) -> Self {
+        if let Some(inner) = opt {
+            Self {
+                inner: inner.into(),
+                is_empty: false,
+            }
+        } else {
+            Self {
+                /// # Safety
+                ///
+                /// This type should implement `bytemuck::Zeroable` trait. It's up to the user
+                /// to check it.
+                inner: unsafe { ::std::mem::zeroed() },
+                is_empty: true,
+            }
         }
     }
 }
-impl Drop for Optionu8 {
-    fn drop(&mut self) {
-        if !self.is_empty {
-            unsafe { self.inner.assume_init_drop() }
+impl From<OptionFooFfi> for Option<Foo> {
+    fn from(opt_ffi: OptionFooFfi) -> Self {
+        if opt_ffi.is_empty { None } else { Some(opt_ffi.inner.into()) }
+    }
+}
+impl From<Option<u8>> for Optionu8 {
+    fn from(opt: Option<u8>) -> Self {
+        if let Some(inner) = opt {
+            Self {
+                inner: inner.into(),
+                is_empty: false,
+            }
+        } else {
+            Self {
+                /// # Safety
+                ///
+                /// This type should implement `bytemuck::Zeroable` trait. It's up to the user
+                /// to check it.
+                inner: unsafe { ::std::mem::zeroed() },
+                is_empty: true,
+            }
         }
+    }
+}
+impl From<Optionu8> for Option<u8> {
+    fn from(opt_ffi: Optionu8) -> Self {
+        if opt_ffi.is_empty { None } else { Some(opt_ffi.inner.into()) }
     }
 }
 "
