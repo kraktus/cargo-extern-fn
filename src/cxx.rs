@@ -939,7 +939,7 @@ mod tests {
     #[test]
     fn test_ffi_struct_declaration_with_options() {
         let item_struct: ItemStruct =
-            syn::parse_str(r#"pub struct Foo(Option<usize>, Option<Bar>);"#).unwrap();
+            syn::parse_str(r#"pub struct Foo(Option<usize>, Option<Bar>, Vec<Option<usize>>, [Option<ByColor<u8>>;2]);"#).unwrap();
         let struct_ = StructOrEnum::new_struct(item_struct, None);
         let ffi = struct_.as_ffi(&[format_ident!("Bar")].into());
         assert_eq!(
@@ -947,6 +947,8 @@ mod tests {
             "pub struct FooFfi {
     pub n0: Optionusize,
     pub n1: OptionBarFfi,
+    pub n2: Vec<Optionusize>,
+    pub n3: [OptionByColoru8; 2],
 }
 "
         )

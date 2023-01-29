@@ -125,6 +125,7 @@ impl VisitMut for AddSuffixLastSegment<'_> {
         if let Some(last_seg) = ty_path.path.segments.last_mut() {
             last_seg.ident = format_ident!("{}{}", last_seg.ident, self.suffix);
         }
+        visit_mut::visit_type_path_mut(self, ty_path)
     }
 }
 
@@ -192,6 +193,7 @@ impl VisitMut for CamelCaseOption {
                 .to_string();
             *ty = syn::parse_str(&camel).expect("parsing ident as option type");
         }
+        visit_mut::visit_type_mut(self, ty)
     }
 }
 
